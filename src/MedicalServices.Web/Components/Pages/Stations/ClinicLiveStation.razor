@@ -1,0 +1,108 @@
+@page "/stations/harasta/clinic-live"
+@layout EmptyLayout
+@attribute [Authorize(Roles = "Admin,StationUser")]
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IHarastaHomeStatsService HomeStats
+@inject AuthenticationStateProvider AuthState
+@implements IDisposable
+
+<PageTitle>إحصائيات العيادات — حرستا</PageTitle>
+
+<div class="station-shell harasta-skin">
+    <header class="station-top">
+        <div>
+            <p class="eyebrow light">محطة · إحصائيات العيادات</p>
+            <h1>إحصائيات العيادات — اليوم</h1>
+            <p class="station-sub">محطة مستقلة · بدون وصول لواجهة المشفى الرئيسية</p>
+        </div>
+        <div class="station-top-meta">
+            <button type="button" class="btn-outline" disabled="@_busy" @onclick="RefreshAsync">تحديث</button>
+            <a class="btn-outline" href="/auth/logout" data-enhance-nav="false">خروج</a>
+        </div>
+    </header>
+
+    @if (_denied)
+    {
+        <section class="harasta-panel station-body">
+            <h2>غير مصرح</h2>
+            <p class="lead">هذه المحطة لمستخدم مشفى حرستا أو الإدارة فقط.</p>
+        </section>
+    }
+    else
+    {
+        <section class="harasta-panel station-body clinic-live-panel">
+            <div class="clinic-live-table-wrap">
+                <div class="clinic-live-cols" aria-hidden="true">
+                    <span>العيادة</span>
+                    <span>بالانتظار الآن</span>
+                    <span>توجيهات اليوم</span>
+                    <span>متوسط الانتظار</span>
+                    <span>أطول انتظار حالي</span>
+                </div>
+                <div class="clinic-live-rows">
+                    @foreach (var r in _rows)
+                    {
+                        <div class="clinic-live-row">
+                            <strong>@(r.Clinic == "الإسعاف" ? r.Clinic : $"عيادة {r.Clinic}")</strong>
+                            <span class="@(r.Waiting > 0 ? "hot" : "muted")">@r.Waiting</span>
+                            <span class="@(r.TodayReferrals > 0 ? "hot" : "muted")">@r.TodayReferrals</span>
+                            <span class="muted">@r.AvgWaitLabel</span>
+                            <span class="muted">@r.MaxWaitLabel</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </section>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<ClinicLiveRow> _rows = [];
+    private bool _busy;
+    private bool _denied;
+    private System.Threading.Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+        var isAdmin = user.IsInRole(AppRoles.Admin);
+        var linked = user.FindFirst(AppClaimTypes.FacilityId)?.Value;
+        _denied = !(isAdmin || string.Equals(linked, HarastaData.FacilityId, StringComparison.OrdinalIgnoreCase));
+        if (_denied) return;
+
+        await RefreshAsync();
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await RefreshAsync();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20));
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_denied) return;
+        _busy = true;
+        try
+        {
+            _rows = await HomeStats.GetClinicLiveAsync(HarastaData.FacilityId);
+        }
+        catch
+        {
+            _rows = HarastaData.Clinics
+                .Select(c => new ClinicLiveRow(c, 0, 0, "—", "—"))
+                .ToList();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

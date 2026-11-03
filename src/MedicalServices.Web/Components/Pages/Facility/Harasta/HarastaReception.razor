@@ -1,0 +1,1004 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IReceptionService Reception
+@inject IBookingService Bookings
+@inject IReceptionNotifier ReceptionNotifier
+@inject AuthenticationStateProvider AuthState
+@implements IDisposable
+
+<section class="harasta-stack rx-desk @(DeskMode ? "desk-mode" : null)">
+    <div class="rx-stats">
+        <article class="rx-stat">
+            <span>حجوزات بانتظار الحضور</span>
+            <strong>@_pendingBookings.Count</strong>
+        </article>
+        <article class="rx-stat accent">
+            <span>بالطابور للتوجيه</span>
+            <strong>@_queue.Count</strong>
+        </article>
+        <article class="rx-stat soft">
+            <span>اليوم</span>
+            <strong class="rx-stat-date">@DateTime.Today.ToString("yyyy-MM-dd")</strong>
+        </article>
+    </div>
+
+    <div class="harasta-panel rx-panel">
+        <div class="queue-head">
+            <div>
+                <p class="eyebrow">حجوزات الإدارات</p>
+                <h2>وصول المراجعين المحجوزين</h2>
+            </div>
+            <strong class="queue-count">@_pendingBookings.Count</strong>
+        </div>
+
+        <div class="rx-search">
+            <input class="input" @bind="_bookingQuery" @bind:event="oninput"
+                   placeholder="بحث: رمز الحجز · الاسم · الرقم الوطني" />
+        </div>
+
+        @if (_bookingsLoading)
+        {
+            <p class="muted rx-empty">جاري تحميل الحجوزات...</p>
+        }
+        else if (FilteredBookings.Count == 0)
+        {
+            <div class="rx-empty-state">
+                <strong>لا حجوزات بانتظار الحضور</strong>
+                <span>عند وصول مراجع محجوز، سجّل وصوله من هنا.</span>
+            </div>
+        }
+        else
+        {
+            <div class="queue-list rx-booking-list">
+                @foreach (var b in FilteredBookings)
+                {
+                    var isToday = b.AppointmentDate == DateOnly.FromDateTime(DateTime.Today);
+                    <article class="queue-card booking-arrive-row rx-booking-card">
+                        <div class="rx-booking-code">
+                            <em>@b.Code</em>
+                            <span>@b.AppointmentDate.ToString("yyyy-MM-dd") · @b.Slot</span>
+                        </div>
+                        <div class="queue-card-main">
+                            <strong>@b.PatientName</strong>
+                            @if (!string.IsNullOrWhiteSpace(b.SpecialType))
+                            {
+                                <em class="special-tag">@b.SpecialType</em>
+                            }
+                            <span class="muted">عيادة @b.Clinic · @SideLabel(b)</span>
+                            <span class="muted mono">@(b.NationalId ?? "بدون هوية")</span>
+                        </div>
+                        <div class="booking-arrive-actions">
+                            @if (isToday)
+                            {
+                                <button type="button" class="btn-enter compact" disabled="@_busyBookingIds.Contains(b.Id)" @onclick="() => ArriveAsync(b)">
+                                    وصل — فتح استمارة
+                                </button>
+                                <button type="button" class="chip" disabled="@_busyBookingIds.Contains(b.Id)" @onclick="() => NoShowAsync(b)">لم يحضر</button>
+                            }
+                            else
+                            {
+                                <span class="status-pill">موعد لاحق</span>
+                            }
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+
+    </div>
+
+    <AlertDialog Message="@_bookingMessage" IsError="@_bookingError" OnDismiss="DismissBookingMessage" />
+    <AlertDialog Message="@_formMessage" IsError="@_formError" OnDismiss="DismissFormMessage" />
+
+    <div class="reception-layout">
+        <div class="harasta-panel rx-panel">
+            <p class="eyebrow">استمارة جديدة</p>
+            <h1>فتح استمارة عيادة</h1>
+            <p class="lead">ابحث عن مراجع سابق بالرقم الوطني أو الاسم لتعبئة الاستمارة تلقائياً — أو سجّل مراجعاً جديداً.</p>
+
+            <div class="bk-prior-inline rx-prior">
+                <input class="input" @bind="_priorQuery" @bind:event="oninput" @bind:after="SearchPriorAsync"
+                       placeholder="بحث عن شخص سابق: رقم وطني أو اسم..." />
+                @if (_priorSearching)
+                {
+                    <span class="muted">جاري البحث...</span>
+                }
+                else if (_priorHits.Count > 0)
+                {
+                    <div class="bk-prior-hits">
+                        @foreach (var hit in _priorHits)
+                        {
+                            <button type="button" class="bk-prior-hit" @onclick="() => ApplyPrior(hit)">
+                                <strong>@hit.PatientName</strong>
+                                <span class="mono">@(hit.NationalId ?? "بدون هوية")</span>
+                                <em>@hit.Source · @hit.VisitCount مرة@(hit.BookedClinic is null ? "" : $" · عيادة {hit.BookedClinic}")</em>
+                                <span class="chip on">استخدام</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="entry-grid">
+                <button type="button" class="entry-card @(_entry == "حجز مسبق" ? "active cyan" : null)" @onclick='() => _entry = "حجز مسبق"'>
+                    <strong>حجز مسبق</strong>
+                    <span>محجوز من الإدارة التابع لها</span>
+                </button>
+                <button type="button" class="entry-card @(_entry == "إسعافي" ? "active red" : null)" @onclick='() => _entry = "إسعافي"'>
+                    <strong>إسعافي</strong>
+                    <span>تحويل مباشر إلى الإسعاف</span>
+                </button>
+            </div>
+
+            <div class="chip-row">
+                <button type="button" class="chip @(_category == "عامة" ? "on" : null)" @onclick='() => _category = "عامة"'>حالة عامة</button>
+                <button type="button" class="chip amber @(_category == "خاصة" ? "on" : null)" @onclick='() => _category = "خاصة"'>حالة خاصة</button>
+            </div>
+
+            @if (_category == "خاصة")
+            {
+                <div class="special-box">
+                    <div class="chip-row">
+                        @foreach (var s in HarastaData.SpecialTypes)
+                        {
+                            <button type="button" class="chip soft @(_special == s ? "on" : null)" @onclick="() => _special = s">@s</button>
+                        }
+                    </div>
+                    <input class="input" @bind="_specialNote" placeholder="@(_special == "بدون هوية" ? "علامات مميزة / جهة الإحضار..." : "رقم الوثيقة أو ملاحظة")" />
+                </div>
+            }
+
+            <div class="admissions-form @(_formFromPrior ? "from-prior" : null)">
+                <div class="field">
+                    <label>الرقم الوطني@(_formFromPrior ? " · من سجل سابق" : "")</label>
+                    <input class="input" value="@_nationalId" disabled="@_noId" maxlength="11"
+                           placeholder="@(_noId ? "لا يحمل هوية" : "11 رقماً")"
+                           @oninput="OnNationalIdChanged" />
+                </div>
+                <div class="field">
+                    <label>الاسم الثلاثي</label>
+                    <input class="input" @bind="_name" @bind:after="() => _formFromPrior = false"
+                           placeholder="@(_noId ? "مثال: مجهول الهوية ذكر" : "الاسم الأول · الأب · العائلة")" />
+                </div>
+                <div class="field">
+                    <label>العمر</label>
+                    <input class="input" type="number" min="0" max="120" @bind="_age" />
+                </div>
+                <div class="field">
+                    <label>المحافظة</label>
+                    <select class="input" @bind="_governorate">
+                        @foreach (var g in HarastaData.Governorates)
+                        {
+                            <option value="@g">@g</option>
+                        }
+                    </select>
+                </div>
+                <div class="field" style="grid-column:1 / -1">
+                    <label>السكن الحالي</label>
+                    <input class="input" @bind="_residence" placeholder="المنطقة - الحي - الشارع" />
+                </div>
+                @if (_entry != "إسعافي")
+                {
+                    <div class="field">
+                        <label>الجهة</label>
+                        <select class="input" value="@_entity" @onchange="OnEntityChanged">
+                            @foreach (var e in BookingCatalog.Entities)
+                            {
+                                <option value="@e">@e</option>
+                            }
+                        </select>
+                    </div>
+                    @if (BookingCatalog.RequiresAdminUnit(_entity))
+                    {
+                        <div class="field">
+                            <label>@BookingCatalog.AdminFieldLabel(_entity)</label>
+                            @if (_entity == BookingCatalog.EntityInterior)
+                            {
+                                <select class="input" @bind="_admin">
+                                    <option value="">اختر الإدارة...</option>
+                                    @foreach (var a in BookingCatalog.InteriorAdmins)
+                                    {
+                                        <option value="@a">@a</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <input class="input" @bind="_admin" placeholder="@BookingCatalog.AdminFieldPlaceholder(_entity)" />
+                            }
+                        </div>
+                    }
+                    <div class="field">
+                        <label>العيادة المحجوز عليها</label>
+                        <select class="input" @bind="_clinic">
+                            @foreach (var c in HarastaData.Clinics.Where(x => x != "الإسعاف"))
+                            {
+                                <option value="@c">@c</option>
+                            }
+                        </select>
+                    </div>
+                }
+            </div>
+
+            <button type="button" class="btn-enter rx-submit @(_entry == "إسعافي" ? "danger" : null)" disabled="@_saving" @onclick="OpenAsync">
+                @(_saving ? "جاري الحفظ..." : _entry == "إسعافي" ? "فتح استمارة إسعافية وتحويل للإسعاف" : "فتح استمارة العيادة")
+            </button>
+        </div>
+
+        <div class="harasta-panel rx-panel">
+            <div class="queue-head">
+                <div>
+                    <p class="eyebrow">طابور التوجيه</p>
+                    <h2>بانتظار التوجيه إلى العيادة</h2>
+                </div>
+                <strong class="queue-count">@_queue.Count</strong>
+            </div>
+
+            @if (_queueLoading)
+            {
+                <p class="muted rx-empty">جاري التحميل...</p>
+            }
+            else if (_queue.Count == 0)
+            {
+                <div class="rx-empty-state">
+                    <strong>الطابور فارغ</strong>
+                    <span>بعد فتح الاستمارة أو تسجيل الوصول تظهر الحالات هنا للتوجيه.</span>
+                </div>
+            }
+            else
+            {
+                <div class="queue-list">
+                    @foreach (var item in _queue)
+                    {
+                        var isOpen = _selected?.Id == item.Id;
+                        var isJustArrived = _justArrivedCaseId == item.Id;
+                        var bookedClinic = isOpen ? _editClinic : item.BookedClinic;
+                        <article class="queue-card rx-queue-card @(isOpen ? "editing" : null) @(isOpen && IsDirty ? "dirty" : null) @(isJustArrived ? "just-arrived" : null)">
+                            <button type="button" class="rx-queue-summary" @onclick="() => ToggleCase(item)">
+                                <div class="queue-card-main">
+                                    <strong>@(isOpen ? _editName : item.PatientName)</strong>
+                                    @if ((isOpen ? _editCategory : item.Category) == "خاصة")
+                                    {
+                                        var special = isOpen ? _editSpecial : item.SpecialType;
+                                        if (!string.IsNullOrWhiteSpace(special))
+                                        {
+                                            <em class="special-tag">@special</em>
+                                        }
+                                    }
+                                    <span class="muted mono">
+                                        @item.CaseNumber ·
+                                        @(isOpen
+                                            ? (string.IsNullOrWhiteSpace(_editNationalId) ? "بدون رقم وطني" : _editNationalId)
+                                            : (string.IsNullOrWhiteSpace(item.NationalId) ? "بدون رقم وطني" : item.NationalId))
+                                        · @((isOpen ? _editAge : item.Age)?.ToString() ?? "—") سنة ·
+                                        @bookedClinic
+                                    </span>
+                                    <span class="status-pill @(isJustArrived ? "arrive" : null)">
+                                        @(isOpen && IsDirty
+                                            ? "تعديل جارٍ"
+                                            : isJustArrived
+                                                ? $"بانتظار الإرسال · {bookedClinic}"
+                                                : PatientCaseStatusLabels.ToArabic(item.Status))
+                                    </span>
+                                </div>
+                            </button>
+
+                            @if (isOpen)
+                            {
+                                <div class="rx-queue-editor">
+                                    @if (!IsDirty && !string.IsNullOrWhiteSpace(_editClinic))
+                                    {
+                                        <div class="rx-next-step" role="status">
+                                            <div>
+                                                <p class="rx-next-kicker">الخطوة التالية</p>
+                                                <strong>إرسال إلى العيادة المحجوزة: @_editClinic</strong>
+                                                <span>راجع البيانات إن لزم، ثم اضغط الزر الأخضر لإدخال المراجع طابور العيادة.</span>
+                                            </div>
+                                            <button type="button" class="btn-enter compact rx-transfer" disabled="@_dossierBusy" @onclick="SendSelectedAsync">
+                                                @(_dossierBusy ? "جاري الإرسال..." : $"إرسال الآن → {_editClinic}")
+                                            </button>
+                                        </div>
+                                    }
+
+                                    <div class="rx-queue-editor-head">
+                                        <div>
+                                            <p class="eyebrow">إضبارة · @_selected!.CaseNumber</p>
+                                            <p class="muted">@_selected.EntryType · @_editCategory · @PatientCaseStatusLabels.ToArabic(_selected.Status)</p>
+                                        </div>
+                                        <button type="button" class="chip" @onclick="TryCloseSelection">إغلاق</button>
+                                    </div>
+
+                                    <div class="chip-row">
+                                        <button type="button" class="chip @(_editCategory == "عامة" ? "on" : null)" @onclick='() => _editCategory = "عامة"'>حالة عامة</button>
+                                        <button type="button" class="chip amber @(_editCategory == "خاصة" ? "on" : null)" @onclick='() => _editCategory = "خاصة"'>حالة خاصة</button>
+                                    </div>
+
+                                    @if (_editCategory == "خاصة")
+                                    {
+                                        <div class="special-box">
+                                            <div class="chip-row">
+                                                @foreach (var s in HarastaData.SpecialTypes)
+                                                {
+                                                    <button type="button" class="chip soft @(_editSpecial == s ? "on" : null)" @onclick="() => _editSpecial = s">@s</button>
+                                                }
+                                            </div>
+                                            <input class="input" @bind="_editSpecialNote" @bind:event="oninput" placeholder="@(_editSpecial == "بدون هوية" ? "علامات مميزة / جهة الإحضار..." : "رقم الوثيقة أو ملاحظة")" />
+                                        </div>
+                                    }
+
+                                    <div class="admissions-form">
+                                        <div class="field">
+                                            <label>الرقم الوطني</label>
+                                            <input class="input" @bind="_editNationalId" @bind:event="oninput" disabled="@_editNoId" maxlength="11" placeholder="@(_editNoId ? "لا يحمل هوية" : "11 رقماً")" />
+                                        </div>
+                                        <div class="field">
+                                            <label>الاسم الثلاثي</label>
+                                            <input class="input" @bind="_editName" @bind:event="oninput" />
+                                        </div>
+                                        <div class="field">
+                                            <label>العمر</label>
+                                            <input class="input" type="number" min="0" max="120" @bind="_editAge" @bind:event="oninput" />
+                                        </div>
+                                        <div class="field">
+                                            <label>المحافظة</label>
+                                            <select class="input" @bind="_editGovernorate">
+                                                @foreach (var g in HarastaData.Governorates)
+                                                {
+                                                    <option value="@g">@g</option>
+                                                }
+                                            </select>
+                                        </div>
+                                        <div class="field" style="grid-column:1 / -1">
+                                            <label>السكن الحالي</label>
+                                            <input class="input" @bind="_editResidence" @bind:event="oninput" placeholder="المنطقة - الحي - الشارع" />
+                                        </div>
+                                        <div class="field">
+                                            <label>الجهة</label>
+                                            <select class="input" value="@_editEntity" @onchange="OnEditEntityChanged">
+                                                @foreach (var e in BookingCatalog.Entities)
+                                                {
+                                                    <option value="@e">@e</option>
+                                                }
+                                            </select>
+                                        </div>
+                                        @if (BookingCatalog.RequiresAdminUnit(_editEntity))
+                                        {
+                                            <div class="field">
+                                                <label>@BookingCatalog.AdminFieldLabel(_editEntity)</label>
+                                                @if (_editEntity == BookingCatalog.EntityInterior)
+                                                {
+                                                    <select class="input" @bind="_editAdmin">
+                                                        <option value="">اختر الإدارة...</option>
+                                                        @foreach (var a in BookingCatalog.InteriorAdmins)
+                                                        {
+                                                            <option value="@a">@a</option>
+                                                        }
+                                                    </select>
+                                                }
+                                                else
+                                                {
+                                                    <input class="input" @bind="_editAdmin" @bind:event="oninput" placeholder="@BookingCatalog.AdminFieldPlaceholder(_editEntity)" />
+                                                }
+                                            </div>
+                                        }
+                                        <div class="field">
+                                            <label>العيادة المحجوزة</label>
+                                            <select class="input" @bind="_editClinic">
+                                                @foreach (var c in HarastaData.Clinics.Where(x => x != "الإسعاف"))
+                                                {
+                                                    <option value="@c">@c</option>
+                                                }
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    @if (!string.IsNullOrWhiteSpace(_dossierMessage))
+                                    {
+                                        <div class="@(_dossierError ? "login-error" : "save-ok") rx-flash">@_dossierMessage</div>
+                                    }
+
+                                    <div class="booking-arrive-actions rx-dossier-actions">
+                                        <button type="button" class="btn-enter compact @(IsDirty ? null : "rx-transfer")" disabled="@_dossierBusy" @onclick="PrimaryDossierActionAsync">
+                                            @if (_dossierBusy)
+                                            {
+                                                <text>جاري التنفيذ...</text>
+                                            }
+                                            else if (IsDirty)
+                                            {
+                                                <text>حفظ التعديلات</text>
+                                            }
+                                            else if (_selected.Status == PatientCaseStatus.ReturnedToReception)
+                                            {
+                                                <text>إعادة إرسال إلى العيادة المحجوزة — @_editClinic</text>
+                                            }
+                                            else
+                                            {
+                                                <text>إرسال إلى العيادة المحجوزة — @_editClinic</text>
+                                            }
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        </article>
+                    }
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_queueMessage))
+            {
+                <div class="@(_queueError ? "login-error" : "save-ok") rx-flash">@_queueMessage</div>
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter] public bool DeskMode { get; set; }
+
+    private string _entry = "حجز مسبق";
+    private string _category = "عامة";
+    private string _special = HarastaData.SpecialTypes[0];
+    private string _specialNote = string.Empty;
+    private string _nationalId = string.Empty;
+    private string _name = string.Empty;
+    private int? _age;
+    private string _residence = string.Empty;
+    private string _governorate = "ريف دمشق";
+    private string _entity = BookingCatalog.EntityInterior;
+    private string _admin = string.Empty;
+    private string _clinic = "القلبية";
+    private bool _saving;
+    private bool _formError;
+    private string? _formMessage;
+
+    private List<PatientCase> _queue = [];
+    private PatientCase? _selected;
+    private Guid? _justArrivedCaseId;
+    private string _editCategory = "عامة";
+    private string _editSpecial = HarastaData.SpecialTypes[0];
+    private string _editSpecialNote = string.Empty;
+    private string _editNationalId = string.Empty;
+    private string _editName = string.Empty;
+    private int? _editAge;
+    private string _editResidence = string.Empty;
+    private string _editGovernorate = "ريف دمشق";
+    private string _editEntity = BookingCatalog.EntityInterior;
+    private string _editAdmin = string.Empty;
+    private string _editClinic = "القلبية";
+    private bool _dossierBusy;
+    private bool _dossierError;
+    private string? _dossierMessage;
+    private string _editBaseline = string.Empty;
+    private bool _queueLoading = true;
+    private bool _queueError;
+    private string? _queueMessage;
+    private bool _editNoId => _editCategory == "خاصة" && _editSpecial == "بدون هوية";
+    private bool IsDirty => _selected is not null && EditSnapshot() != _editBaseline;
+
+    private List<AppointmentBooking> _pendingBookings = [];
+    private readonly HashSet<Guid> _busyBookingIds = [];
+    private bool _bookingsLoading = true;
+    private bool _bookingError;
+    private string? _bookingMessage;
+    private string _bookingQuery = string.Empty;
+    private string _priorQuery = string.Empty;
+    private List<ReceptionPatientProfile> _priorHits = [];
+    private bool _priorSearching;
+    private bool _formFromPrior;
+    private CancellationTokenSource? _priorCts;
+
+    private bool _noId => _category == "خاصة" && _special == "بدون هوية";
+
+    private List<AppointmentBooking> FilteredBookings
+    {
+        get
+        {
+            var q = _bookingQuery.Trim();
+            if (string.IsNullOrEmpty(q))
+                return _pendingBookings;
+            return _pendingBookings
+                .Where(b =>
+                    b.Code.Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || b.PatientName.Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || (b.NationalId?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false))
+                .ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        ReceptionNotifier.AlertReceived += OnBookingAlert;
+        await ReloadBookingsAsync();
+        await ReloadQueueAsync();
+    }
+
+    private void OnBookingAlert(ReceptionAlert alert)
+    {
+        if (!string.Equals(alert.FacilityId, HarastaData.FacilityId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _ = InvokeAsync(async () =>
+        {
+            _bookingError = false;
+            _bookingMessage = $"إشعار: {alert.Message}";
+            await ReloadBookingsAsync();
+            await ReloadQueueAsync();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        ReceptionNotifier.AlertReceived -= OnBookingAlert;
+        _priorCts?.Cancel();
+        _priorCts?.Dispose();
+    }
+
+    private static string SideLabel(AppointmentBooking b) =>
+        string.IsNullOrWhiteSpace(b.AdminUnit) ? b.Entity : $"{b.Entity} — {b.AdminUnit}";
+
+    private async Task SearchPriorAsync()
+    {
+        _priorCts?.Cancel();
+        _priorCts = new CancellationTokenSource();
+        var token = _priorCts.Token;
+        if (_priorQuery.Trim().Length < 2)
+        {
+            _priorHits = [];
+            return;
+        }
+
+        _priorSearching = true;
+        try
+        {
+            await Task.Delay(220, token);
+            _priorHits = (await Reception.SearchKnownPatientsAsync(
+                HarastaData.FacilityId, _priorQuery, token)).ToList();
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+        catch
+        {
+            _priorHits = [];
+        }
+        finally
+        {
+            _priorSearching = false;
+        }
+    }
+
+    private async Task OnNationalIdChanged(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString() ?? string.Empty;
+        _nationalId = new string(raw.Where(char.IsDigit).Take(11).ToArray());
+        _formFromPrior = false;
+        if (_nationalId.Length != 11 || _noId)
+            return;
+
+        try
+        {
+            var hits = await Reception.SearchKnownPatientsAsync(HarastaData.FacilityId, _nationalId);
+            var match = hits.FirstOrDefault(x => x.NationalId == _nationalId);
+            if (match is null) return;
+            ApplyPrior(match);
+        }
+        catch
+        {
+            // Optional while typing.
+        }
+    }
+
+    private void ApplyPrior(ReceptionPatientProfile p)
+    {
+        _name = p.PatientName;
+        _nationalId = p.NationalId ?? string.Empty;
+        _age = p.Age;
+        _governorate = string.IsNullOrWhiteSpace(p.Governorate) ? _governorate : p.Governorate;
+        _residence = p.Residence ?? string.Empty;
+        _category = string.IsNullOrWhiteSpace(p.Category) ? "عامة" : p.Category;
+        if (_category == "خاصة" && !string.IsNullOrWhiteSpace(p.SpecialType))
+            _special = p.SpecialType;
+
+        if (!string.IsNullOrWhiteSpace(p.BookedClinic) && p.BookedClinic != "الإسعاف")
+            _clinic = p.BookedClinic;
+
+        if (!string.IsNullOrWhiteSpace(p.AdminUnit))
+        {
+            var (entity, admin) = ParseAffiliation(p.AdminUnit);
+            _entity = entity;
+            _admin = admin;
+            if (_entry != "إسعافي")
+                _entry = "حجز مسبق";
+        }
+
+        _priorQuery = string.Empty;
+        _priorHits = [];
+        _formFromPrior = true;
+        _formError = false;
+        _formMessage = $"تم تعبئة بيانات {p.PatientName} من {p.Source} — راجع العيادة ثم افتح الاستمارة.";
+    }
+
+    private async Task ReloadBookingsAsync()
+    {
+        _bookingsLoading = true;
+        try
+        {
+            _pendingBookings = (await Bookings.ListPendingReservedAsync(HarastaData.FacilityId)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _bookingError = true;
+            _bookingMessage = "تعذر تحميل حجوزات اليوم: " + ex.Message;
+        }
+        finally
+        {
+            _bookingsLoading = false;
+        }
+    }
+
+    private async Task ArriveAsync(AppointmentBooking booking)
+    {
+        _busyBookingIds.Add(booking.Id);
+        _bookingMessage = null;
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var userName = state.User.Identity?.Name ?? "unknown";
+            var row = await Reception.ArriveFromBookingAsync(HarastaData.FacilityId, booking.Id, userName);
+            var clinic = string.IsNullOrWhiteSpace(row.BookedClinic) ? booking.Clinic : row.BookedClinic;
+            _bookingError = false;
+            _bookingMessage =
+                $"وصل {booking.Code} — فُتحت الإضبارة {row.CaseNumber}. الخطوة التالية: إرسال إلى عيادة {clinic}.";
+            await ReloadBookingsAsync();
+            await ReloadQueueAsync();
+
+            var arrived = _queue.FirstOrDefault(x => x.Id == row.Id) ?? row;
+            SelectCase(arrived);
+            _justArrivedCaseId = arrived.Id;
+            _dossierError = false;
+            _dossierMessage = $"الخطوة التالية: إرسال {arrived.PatientName} إلى عيادة {clinic}.";
+        }
+        catch (Exception ex)
+        {
+            _bookingError = true;
+            _bookingMessage = ex.Message;
+        }
+        finally
+        {
+            _busyBookingIds.Remove(booking.Id);
+        }
+    }
+
+    private async Task NoShowAsync(AppointmentBooking booking)
+    {
+        _busyBookingIds.Add(booking.Id);
+        _bookingMessage = null;
+        try
+        {
+            await Bookings.MarkNoShowAsync(HarastaData.FacilityId, booking.Id);
+            _bookingError = false;
+            _bookingMessage = $"تم تسجيل {booking.Code} كـ «لم يحضر».";
+            await ReloadBookingsAsync();
+        }
+        catch (Exception ex)
+        {
+            _bookingError = true;
+            _bookingMessage = ex.Message;
+        }
+        finally
+        {
+            _busyBookingIds.Remove(booking.Id);
+        }
+    }
+
+    private async Task ReloadQueueAsync()
+    {
+        var showSpinner = _queue.Count == 0 && _selected is null;
+        if (showSpinner)
+            _queueLoading = true;
+        try
+        {
+            var items = await Reception.GetQueueAsync(HarastaData.FacilityId);
+            _queue = items.ToList();
+            if (_selected is not null)
+            {
+                var fresh = _queue.FirstOrDefault(x => x.Id == _selected.Id);
+                if (fresh is null)
+                    ForceClearSelection();
+                else
+                    _selected = fresh;
+            }
+        }
+        catch (Exception ex)
+        {
+            _queueError = true;
+            _queueMessage = "تعذر تحميل الطابور: " + ex.Message;
+        }
+        finally
+        {
+            _queueLoading = false;
+        }
+    }
+
+    private void ToggleCase(PatientCase item)
+    {
+        if (_selected?.Id == item.Id)
+        {
+            TryCloseSelection();
+            return;
+        }
+
+        if (_selected is not null && IsDirty)
+        {
+            PromptSaveRequired();
+            return;
+        }
+
+        SelectCase(item);
+    }
+
+    private void SelectCase(PatientCase item)
+    {
+        _selected = item;
+        _editCategory = string.IsNullOrWhiteSpace(item.Category) ? "عامة" : item.Category;
+        _editSpecial = string.IsNullOrWhiteSpace(item.SpecialType) ? HarastaData.SpecialTypes[0] : item.SpecialType;
+        _editSpecialNote = item.SpecialNote ?? string.Empty;
+        _editNationalId = item.NationalId ?? string.Empty;
+        _editName = item.PatientName;
+        _editAge = item.Age;
+        _editResidence = item.Residence ?? string.Empty;
+        _editGovernorate = string.IsNullOrWhiteSpace(item.Governorate) ? "ريف دمشق" : item.Governorate;
+        (_editEntity, _editAdmin) = ParseAffiliation(item.AdminUnit);
+        _editClinic = string.IsNullOrWhiteSpace(item.BookedClinic) || item.BookedClinic == "الإسعاف"
+            ? HarastaData.Clinics.First(c => c != "الإسعاف")
+            : item.BookedClinic;
+        _editBaseline = EditSnapshot();
+        _dossierMessage = null;
+        _dossierError = false;
+    }
+
+    private void TryCloseSelection()
+    {
+        if (IsDirty)
+        {
+            PromptSaveRequired();
+            return;
+        }
+
+        ForceClearSelection();
+    }
+
+    private void ForceClearSelection()
+    {
+        _selected = null;
+        _justArrivedCaseId = null;
+        _editBaseline = string.Empty;
+        _dossierMessage = null;
+        _dossierError = false;
+    }
+
+    private void PromptSaveRequired()
+    {
+        _dossierError = true;
+        _dossierMessage = "يوجد تعديلات غير محفوظة — احفظ التعديلات أولاً قبل الإغلاق أو التحويل.";
+    }
+
+    private string EditSnapshot() => string.Join('\u001f',
+        _editCategory,
+        _editCategory == "خاصة" ? _editSpecial : "",
+        _editSpecialNote.Trim(),
+        _editNationalId.Trim(),
+        _editName.Trim(),
+        _editAge?.ToString() ?? "",
+        _editResidence.Trim(),
+        _editGovernorate,
+        _editEntity,
+        _editAdmin.Trim(),
+        _editClinic);
+
+    private Task PrimaryDossierActionAsync() =>
+        IsDirty ? SaveDossierAsync() : SendSelectedAsync();
+
+    private async Task SaveDossierAsync()
+    {
+        if (_selected is null) return;
+        if (!IsDirty)
+        {
+            _dossierError = false;
+            _dossierMessage = "لا توجد تعديلات للحفظ.";
+            return;
+        }
+
+        _dossierBusy = true;
+        _dossierMessage = null;
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var userName = state.User.Identity?.Name ?? "unknown";
+            var affiliation = FormatAffiliation(_editEntity, _editAdmin);
+            var row = await Reception.UpdateAtReceptionAsync(
+                HarastaData.FacilityId,
+                _selected.Id,
+                new UpdatePatientCaseRequest(
+                    _editCategory,
+                    _editCategory == "خاصة" ? _editSpecial : null,
+                    _editSpecialNote,
+                    _editNationalId,
+                    _editName,
+                    _editAge,
+                    _editResidence,
+                    _editGovernorate,
+                    affiliation,
+                    _editClinic),
+                userName);
+
+            _selected = row;
+            _editBaseline = EditSnapshot();
+            _dossierError = false;
+            _dossierMessage = $"تم حفظ تعديلات {row.CaseNumber}.";
+            await ReloadQueueAsync();
+        }
+        catch (Exception ex)
+        {
+            _dossierError = true;
+            _dossierMessage = ex.Message;
+        }
+        finally
+        {
+            _dossierBusy = false;
+        }
+    }
+
+    private async Task SendSelectedAsync()
+    {
+        if (_selected is null) return;
+        if (IsDirty)
+        {
+            PromptSaveRequired();
+            return;
+        }
+
+        _dossierBusy = true;
+        _dossierMessage = null;
+        _queueMessage = null;
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var userName = state.User.Identity?.Name ?? "unknown";
+
+            var caseNumber = _selected.CaseNumber;
+            var clinic = _editClinic;
+            await Reception.SendToClinicAsync(HarastaData.FacilityId, _selected.Id, clinic, userName);
+            _dossierError = false;
+            _queueError = false;
+            _justArrivedCaseId = null;
+            _queueMessage = $"تم إرسال {caseNumber} إلى عيادة {clinic} — دخل طابور العيادة.";
+            ForceClearSelection();
+            await ReloadQueueAsync();
+        }
+        catch (Exception ex)
+        {
+            _dossierError = true;
+            _dossierMessage = ex.Message;
+        }
+        finally
+        {
+            _dossierBusy = false;
+        }
+    }
+
+    private void OnEntityChanged(ChangeEventArgs e)
+    {
+        _entity = e.Value?.ToString() ?? BookingCatalog.EntityInterior;
+        _admin = string.Empty;
+    }
+
+    private void OnEditEntityChanged(ChangeEventArgs e)
+    {
+        _editEntity = e.Value?.ToString() ?? BookingCatalog.EntityInterior;
+        _editAdmin = string.Empty;
+    }
+
+    private static string FormatAffiliation(string entity, string admin)
+    {
+        if (!BookingCatalog.RequiresAdminUnit(entity))
+            return entity;
+
+        var unit = admin.Trim();
+        if (string.IsNullOrWhiteSpace(unit))
+            throw new InvalidOperationException(BookingCatalog.MissingAdminMessage(entity));
+
+        return string.IsNullOrWhiteSpace(entity) ? unit : $"{entity} — {unit}";
+    }
+
+    private static (string Entity, string Admin) ParseAffiliation(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return (BookingCatalog.EntityInterior, string.Empty);
+
+        var text = raw.Trim();
+        if (BookingCatalog.Entities.Contains(text) && !BookingCatalog.RequiresAdminUnit(text))
+            return (text, string.Empty);
+
+        var sep = text.IndexOf(" — ", StringComparison.Ordinal);
+        if (sep > 0)
+        {
+            var entity = text[..sep].Trim();
+            var admin = text[(sep + 3)..].Trim();
+            if (BookingCatalog.Entities.Contains(entity))
+                return (entity, admin);
+        }
+
+        if (BookingCatalog.InteriorAdmins.Contains(text))
+            return (BookingCatalog.EntityInterior, text);
+
+        return (BookingCatalog.EntityOther, text);
+    }
+
+    private void DismissFormMessage()
+    {
+        _formMessage = null;
+        _formError = false;
+    }
+
+    private void DismissBookingMessage()
+    {
+        _bookingMessage = null;
+        _bookingError = false;
+    }
+
+    private async Task OpenAsync()
+    {
+        _saving = true;
+        _formMessage = null;
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var userName = state.User.Identity?.Name ?? "unknown";
+            var affiliation = _entry == "إسعافي" ? null : FormatAffiliation(_entity, _admin);
+
+            var row = await Reception.OpenAsync(
+                HarastaData.FacilityId,
+                new OpenPatientCaseRequest(
+                    _entry,
+                    _category,
+                    _category == "خاصة" ? _special : null,
+                    _specialNote,
+                    _nationalId,
+                    _name,
+                    _age,
+                    _residence,
+                    _governorate,
+                    affiliation,
+                    _clinic),
+                userName);
+
+            _formError = false;
+            _formMessage = row.Status == PatientCaseStatus.InClinic
+                ? $"تم فتح {row.CaseNumber} وتحويله إلى الإسعاف."
+                : $"تم فتح الإضبارة {row.CaseNumber} وإضافتها للطابور.";
+
+            _nationalId = string.Empty;
+            _name = string.Empty;
+            _age = null;
+            _residence = string.Empty;
+            _specialNote = string.Empty;
+
+            await ReloadQueueAsync();
+        }
+        catch (Exception ex)
+        {
+            _formError = true;
+            _formMessage = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+}

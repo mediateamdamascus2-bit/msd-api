@@ -1,0 +1,188 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services
+@inject IUnitOpsService Ops
+@inject AuthenticationStateProvider AuthState
+
+<section class="harasta-stack">
+    <div class="harasta-panel">
+        <p class="eyebrow">EVENTS</p>
+        <h1>الأحداث</h1>
+        <p class="lead">تسجيل أحداث الوحدة الميدانية ومتابعتها حتى الإغلاق.</p>
+
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <div class="@(_error ? "login-error" : "save-ok")" style="margin-top:0.85rem">@_message</div>
+        }
+
+        <div class="admissions-form" style="margin-top:1rem">
+            <div class="field" style="grid-column:1 / -1">
+                <label>عنوان الحدث</label>
+                <input class="input" @bind="_title" placeholder="مثال: إصابة أثناء الدورية" />
+            </div>
+            <div class="field">
+                <label>النوع</label>
+                <NiceSelect @bind-Value="_kind" Options="_kindOpts" />
+            </div>
+            <div class="field">
+                <label>الخطورة</label>
+                <NiceSelect @bind-Value="_severity" Options="_severityOpts" />
+            </div>
+            <div class="field" style="grid-column:1 / -1">
+                <label>تفاصيل</label>
+                <input class="input" @bind="_details" placeholder="اختياري" />
+            </div>
+        </div>
+
+        <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@_saving" @onclick="CreateAsync">
+            @(_saving ? "جاري التسجيل..." : "تسجيل حدث")
+        </button>
+    </div>
+
+    <div class="harasta-panel">
+        <div class="queue-head">
+            <div>
+                <p class="eyebrow">LIVE</p>
+                <h2>سجل الأحداث</h2>
+            </div>
+            <div class="chip-row">
+                <button type="button" class="chip @(_openOnly ? "on" : null)" @onclick="() => SetFilter(true)">المفتوحة</button>
+                <button type="button" class="chip @(!_openOnly ? "on" : null)" @onclick="() => SetFilter(false)">الكل</button>
+            </div>
+        </div>
+
+        @if (_loading)
+        {
+            <p class="muted">جاري التحميل...</p>
+        }
+        else if (_rows.Count == 0)
+        {
+            <div class="rx-empty-state">
+                <strong>لا أحداث</strong>
+                <span>سجّل أول حدث من النموذج أعلاه.</span>
+            </div>
+        }
+        else
+        {
+            <div class="queue-list">
+                @foreach (var row in _rows)
+                {
+                    <article class="queue-card">
+                        <div class="queue-card-main">
+                            <strong>@row.Title</strong>
+                            <span class="muted">@row.Kind · @row.Severity · @row.CreatedAt.ToLocalTime().ToString("g") · @row.CreatedBy</span>
+                            @if (!string.IsNullOrWhiteSpace(row.Details))
+                            {
+                                <span class="muted">@row.Details</span>
+                            }
+                            <span class="status-pill">@row.Status</span>
+                        </div>
+                        @if (row.Status == "مفتوح")
+                        {
+                            <div class="booking-arrive-actions" style="margin-top:0.65rem">
+                                <button type="button" class="btn-enter compact" disabled="@_busyIds.Contains(row.Id)" @onclick="() => CloseAsync(row)">
+                                    إغلاق الحدث
+                                </button>
+                            </div>
+                        }
+                    </article>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string FacilityId { get; set; } = string.Empty;
+
+    private List<FacilityEvent> _rows = [];
+    private string _title = string.Empty;
+    private static readonly NiceSelect.Opt[] _kindOpts =
+        UnitOpsCatalog.EventKinds.Select(k => new NiceSelect.Opt(k, k)).ToArray();
+    private static readonly NiceSelect.Opt[] _severityOpts =
+        UnitOpsCatalog.EventSeverities.Select(s => new NiceSelect.Opt(s, s)).ToArray();
+    private string _kind = UnitOpsCatalog.EventKinds[0];
+    private string _severity = UnitOpsCatalog.EventSeverities[0];
+    private string _details = string.Empty;
+    private bool _openOnly = true;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _error;
+    private string? _message;
+    private readonly HashSet<Guid> _busyIds = [];
+
+    protected override async Task OnParametersSetAsync() => await ReloadAsync();
+
+    private async Task SetFilter(bool openOnly)
+    {
+        _openOnly = openOnly;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _rows = (await Ops.ListEventsAsync(FacilityId, _openOnly)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = "تعذر تحميل الأحداث: " + ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        _saving = true;
+        _message = null;
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            await Ops.CreateEventAsync(
+                FacilityId,
+                new CreateFacilityEventRequest(_title, _kind, _severity, _details),
+                state.User.Identity?.Name ?? "unknown");
+            _title = string.Empty;
+            _details = string.Empty;
+            _error = false;
+            _message = "تم تسجيل الحدث.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CloseAsync(FacilityEvent row)
+    {
+        _busyIds.Add(row.Id);
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            await Ops.CloseEventAsync(FacilityId, row.Id, state.User.Identity?.Name ?? "unknown");
+            _error = false;
+            _message = $"أُغلق الحدث: {row.Title}";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busyIds.Remove(row.Id);
+        }
+    }
+}

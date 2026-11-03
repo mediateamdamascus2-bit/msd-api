@@ -1,0 +1,127 @@
+@using System.Globalization
+
+<div class="msd-select msd-month @(_open ? "is-open" : null)">
+    @if (_open)
+    {
+        <button type="button" class="msd-select-backdrop" aria-label="إغلاق" @onclick="Close"></button>
+    }
+    <button type="button" class="msd-select-trigger input hasia-date-input" aria-haspopup="dialog" aria-expanded="@_open" @onclick="Toggle">
+        <span class="msd-select-value">@Label</span>
+        <span class="msd-select-chevron" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+        </span>
+    </button>
+    @if (_open)
+    {
+        <div class="msd-month-menu msd-month-menu-abs">
+            <div class="msd-month-head">
+                <button type="button" class="msd-month-nav" disabled="@(!CanPrev)" @onclick="PrevYear" aria-label="السنة السابقة">‹</button>
+                <strong class="mono" lang="en" dir="ltr">@ArLatnCulture.ToLatnDigits(_year.ToString(CultureInfo.InvariantCulture))</strong>
+                <button type="button" class="msd-month-nav" disabled="@(!CanNext)" @onclick="NextYear" aria-label="السنة التالية">›</button>
+            </div>
+            <div class="msd-month-grid">
+                @for (var m = 1; m <= 12; m++)
+                {
+                    var month = m;
+                    var on = _selY == _year && _selM == month;
+                    var dis = IsDisabled(month);
+                    <button type="button"
+                            class="msd-month-cell @(on ? "is-active" : null) @(dis ? "is-disabled" : null)"
+                            disabled="@dis"
+                            @onclick="() => PickAsync(month)">
+                        @MonthName(month)
+                    </button>
+                }
+            </div>
+            <div class="msd-month-foot">
+                <button type="button" class="msd-month-link" @onclick="ThisMonthAsync">هذا الشهر</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = DateTime.Now.ToString("yyyy-MM");
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string? Max { get; set; }
+    [Parameter] public string? Min { get; set; }
+
+    private bool _open;
+    private int _year;
+    private int _selY;
+    private int _selM;
+
+    private string Label
+    {
+        get
+        {
+            Parse(Value, out var y, out var m);
+            return $"{MonthName(m)} {ArLatnCulture.ToLatnDigits(y.ToString(CultureInfo.InvariantCulture))}";
+        }
+    }
+
+    private bool CanPrev => string.IsNullOrEmpty(Min) || _year > ParseYear(Min!);
+    private bool CanNext => string.IsNullOrEmpty(Max) || _year < ParseYear(Max!);
+
+    protected override void OnParametersSet()
+    {
+        Parse(Value, out _selY, out _selM);
+        if (!_open) _year = _selY;
+    }
+
+    private static void Parse(string ym, out int y, out int m)
+    {
+        y = DateTime.Now.Year;
+        m = DateTime.Now.Month;
+        var p = (ym ?? "").Split('-');
+        if (p.Length >= 1) int.TryParse(p[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out y);
+        if (p.Length >= 2) int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out m);
+        if (m is < 1 or > 12) m = 1;
+    }
+
+    private static int ParseYear(string ym)
+    {
+        Parse(ym, out var y, out _);
+        return y;
+    }
+
+    private static string Fmt(int y, int m) =>
+        $"{y.ToString("0000", CultureInfo.InvariantCulture)}-{m.ToString("00", CultureInfo.InvariantCulture)}";
+
+    private static string MonthName(int m) =>
+        ArLatnCulture.Format(new DateTime(2026, m, 15), "MMMM");
+
+    private bool IsDisabled(int m)
+    {
+        var v = Fmt(_year, m);
+        if (!string.IsNullOrEmpty(Max) && string.CompareOrdinal(v, Max) > 0) return true;
+        if (!string.IsNullOrEmpty(Min) && string.CompareOrdinal(v, Min) < 0) return true;
+        return false;
+    }
+
+    private void Toggle()
+    {
+        _open = !_open;
+        if (_open) { Parse(Value, out _selY, out _selM); _year = _selY; }
+    }
+
+    private void Close() => _open = false;
+    private void PrevYear() { if (CanPrev) _year--; }
+    private void NextYear() { if (CanNext) _year++; }
+
+    private async Task PickAsync(int m)
+    {
+        if (IsDisabled(m)) return;
+        _open = false;
+        await ValueChanged.InvokeAsync(Fmt(_year, m));
+    }
+
+    private async Task ThisMonthAsync()
+    {
+        var n = DateTime.Now;
+        _open = false;
+        await ValueChanged.InvokeAsync(Fmt(n.Year, n.Month));
+    }
+}

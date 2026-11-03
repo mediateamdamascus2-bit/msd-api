@@ -1,0 +1,300 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="hasia-page hasia-cases-layout">
+    <div class="harasta-panel">
+        <p class="eyebrow">CASES</p>
+        <h1>الحالات</h1>
+        <div class="hasia-seg" style="margin:0.85rem 0;width:100%">
+            @foreach (var f in new[] { "جارية", "معلّقة", "منجزة", "الكل" })
+            {
+                <button type="button" class="@(_filter == f ? "on" : null)" @onclick="() => SetFilter(f)">@f</button>
+            }
+        </div>
+        <div class="hasia-case-list">
+            @foreach (var x in Shown)
+            {
+                var s = HasiaData.FindService(x.AtServiceId);
+                <button type="button" class="hasia-case-item @(_sel == x.Id ? "on" : null)" @onclick="() => Select(x.Id)">
+                    <div class="hasia-load-row">
+                        <strong class="mono">@x.CaseCode · #@x.InmateNo</strong>
+                        <span class="hasia-status @StatusClass(x.Status)">@x.Status</span>
+                    </div>
+                    <div class="hasia-result-title">@x.Complaint</div>
+                    <div class="hasia-result-zone @(s?.Zone == "hospital" ? "hosp" : "point")">@(s is null ? x.AtServiceId : $"{HasiaData.ZoneLabel(s.Zone)} · {s.Name}")</div>
+                </button>
+            }
+            @if (!Shown.Any())
+            {
+                <div class="hasia-empty">لا توجد حالات</div>
+            }
+        </div>
+    </div>
+
+    <div>
+        @if (_case is null || _inmate is null)
+        {
+            <div class="harasta-panel"><div class="hasia-empty">اختر حالة لعرضها</div></div>
+        }
+        else
+        {
+            var here = HasiaData.FindService(_case.AtServiceId);
+            var open = _case.Status != "منجزة";
+            <div class="harasta-stack">
+                <div class="harasta-panel">
+                    <div class="queue-head">
+                        <div>
+                            <h2 class="mono">نزيل #@_inmate.InmateNo</h2>
+                            <p class="muted" style="margin:0">ملف @_inmate.FileNo · @_case.CaseCode · فُتحت @_case.OpenedTime · الفارز: @_case.Triager</p>
+                        </div>
+                        <span class="hasia-status @StatusClass(_case.Status)">@_case.Status</span>
+                    </div>
+                    <div class="hasia-complaint">@_case.Complaint</div>
+                    <div class="hasia-kpi-row">
+                        <div class="hasia-kpi"><span>زمرة الدم</span><strong style="font-size:1.1rem">@_inmate.BloodType</strong></div>
+                        <div class="hasia-kpi"><span>مزمن</span><strong style="font-size:1.1rem">@(string.IsNullOrWhiteSpace(_inmate.ChronicCsv) ? "—" : _inmate.ChronicCsv)</strong></div>
+                        <div class="hasia-kpi"><span>تحسس</span><strong style="font-size:1.1rem;color:@(_inmate.Allergies != "—" ? "#cf5a52" : null)">@_inmate.Allergies</strong></div>
+                    </div>
+                    @if (_case.Status == "معلّقة" && !string.IsNullOrWhiteSpace(_case.HoldReason))
+                    {
+                        <p class="login-error" style="margin-top:0.75rem">سبب التعليق: @_case.HoldReason</p>
+                    }
+                </div>
+
+                @if (open)
+                {
+                    <div class="harasta-panel">
+                        <p class="eyebrow">الجهة الحالية · @(here is null ? "" : HasiaData.ZoneLabel(here.Zone))</p>
+                        <h2>@(here?.Name ?? _case.AtServiceId)</h2>
+                        @if (!string.IsNullOrWhiteSpace(_message))
+                        {
+                            <div class="@(_error ? "login-error" : "save-ok")" style="margin-top:0.75rem">@_message</div>
+                        }
+                        <div class="admissions-form" style="margin-top:1rem">
+                            <div class="field"><label>مقدّم الخدمة</label><input class="input" @bind="_provider" /></div>
+                            <div class="field"><label>التشخيص</label><input class="input" @bind="_diagnosis" /></div>
+                            <div class="field" style="grid-column:1 / -1"><label>الإجراءات</label><textarea class="input" rows="2" @bind="_procedures"></textarea></div>
+                        </div>
+                        <div class="hasia-rx-box">
+                            <strong>℞ وصفة الطبيب</strong>
+                            <div class="hasia-rx-row">
+                                <div class="hasia-drug-picker">
+                                    <label>الدواء</label>
+                                    <input class="input" placeholder="ابحث أو اختر دواءً من المخزون" value="@_drug"
+                                           @onfocus="() => _drugOpen = true"
+                                           @oninput="OnDrugInput"
+                                           @onblur="CloseDrugSoon" autocomplete="off" />
+                                    @if (_drugOpen)
+                                    {
+                                        <div class="hasia-drug-menu" @onmousedown:preventDefault="true">
+                                            <div class="hasia-drug-menu-head">
+                                                <span>مخزون الصيدلية</span>
+                                                <em class="mono" lang="en">@DrugOpts.Count()</em>
+                                            </div>
+                                            <div class="hasia-drug-menu-list">
+                                                @foreach (var s in DrugOpts)
+                                                {
+                                                    var low = s.Quantity < 100;
+                                                    <button type="button" class="hasia-drug-item @(low ? "low" : null)" @onclick="() => PickDrug(s.DrugName)">
+                                                        <span class="hasia-drug-ico">℞</span>
+                                                        <span class="hasia-drug-meta">
+                                                            <strong>@s.DrugName</strong>
+                                                            <em>@(low ? "مخزون منخفض" : "متاح للصرف")</em>
+                                                        </span>
+                                                        <span class="hasia-drug-qty mono" lang="en">@s.Quantity حبة</span>
+                                                    </button>
+                                                }
+                                                @if (!DrugOpts.Any())
+                                                {
+                                                    <div class="hasia-empty" style="margin:0.5rem">لا نتائج مطابقة</div>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                                <div class="field">
+                                    <label>الحبات</label>
+                                    <input class="input" type="number" min="1" lang="en" inputmode="numeric" @bind="_qty" />
+                                </div>
+                                <button type="button" class="hasia-act hasia-act-done" style="align-self:end;min-width:6.5rem" @onclick="AddMed">+ إضافة</button>
+                            </div>
+                            @foreach (var (m, i) in _meds.Select((m, i) => (m, i)))
+                            {
+                                <div class="hasia-load-row">
+                                    <span>@m.Drug · <span class="mono" lang="en">@m.Qty</span> حبة</span>
+                                    <button type="button" class="chip" @onclick="() => _meds.RemoveAt(i)">حذف</button>
+                                </div>
+                            }
+                        </div>
+                        <div class="hasia-case-actions" role="group" aria-label="إجراءات الحالة">
+                            <button type="button" class="hasia-act hasia-act-done" disabled="@_saving" @onclick='() => Act("complete")'>تم الإنجاز</button>
+                            <button type="button" class="hasia-act hasia-act-xfer @(_mode == "transfer" ? "on" : null)" @onclick='() => _mode = _mode == "transfer" ? null : "transfer"'>تحويل</button>
+                            <button type="button" class="hasia-act hasia-act-hold @(_mode == "hold" ? "on" : null)" @onclick='() => _mode = _mode == "hold" ? null : "hold"'>تعليق</button>
+                        </div>
+                        @if (_mode == "transfer")
+                        {
+                            <div class="hasia-xfer-panel">
+                                <div class="hasia-seg hasia-xfer-seg">
+                                    <button type="button" class="@(_tz == "point" ? "on" : null)" @onclick='() => _tz = "point"'>النقطة</button>
+                                    <button type="button" class="@(_tz == "hospital" ? "on" : null)" @onclick='() => _tz = "hospital"'>المشفى</button>
+                                </div>
+                                <div class="hasia-svc-grid">
+                                    @foreach (var d in HasiaData.Transferable(_tz ?? here?.Zone ?? "point", _case.AtServiceId))
+                                    {
+                                        <button type="button" class="hasia-svc-card @(_target == d.Id ? "selected" : null)" @onclick="() => _target = d.Id">
+                                            <div><strong>@d.Name</strong></div>
+                                        </button>
+                                    }
+                                </div>
+                                <button type="button" class="hasia-act hasia-act-done hasia-act-block" disabled="@(_saving || string.IsNullOrEmpty(_target))" @onclick='() => Act("transfer")'>تأكيد التحويل</button>
+                            </div>
+                        }
+                        @if (_mode == "hold")
+                        {
+                            <div class="hasia-hold-panel">
+                                <div class="field"><label>سبب التعليق</label><input class="input" @bind="_hold" placeholder="بانتظار تحليل، نقص دواء..." /></div>
+                                <button type="button" class="hasia-act hasia-act-hold on hasia-act-block" disabled="@_saving" @onclick='() => Act("hold")'>تأكيد التعليق</button>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <div class="harasta-panel">
+                    <h2>مسار الحالة</h2>
+                    @foreach (var st in _case.Steps.OrderBy(s => s.SortOrder))
+                    {
+                        var z = HasiaData.FindService(st.AtServiceId);
+                        <div class="hasia-step">
+                            <div class="hasia-load-row">
+                                <strong>@(z?.Name ?? st.AtServiceId)</strong>
+                                <span class="mono muted">@st.Time · @st.By</span>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(st.Diagnosis)) { <div>تشخيص: @st.Diagnosis</div> }
+                            @if (!string.IsNullOrWhiteSpace(st.Procedures)) { <div>إجراء: @st.Procedures</div> }
+                            @if (!string.IsNullOrWhiteSpace(st.Meds)) { <div style="color:var(--hasia-point)">وصفة: @st.Meds</div> }
+                            @if (!string.IsNullOrWhiteSpace(st.Note)) { <em class="chip">@st.Note</em> }
+                        </div>
+                    }
+                    @if (_case.Steps.Count == 0)
+                    {
+                        <p class="muted">لا خطوات بعد</p>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    private string _filter = "جارية";
+    private Guid? _sel;
+    private List<PrisonCase> _cases = [];
+    private PrisonCase? _case;
+    private PrisonInmate? _inmate;
+    private List<PrisonPharmacyItem> _stock = [];
+    private string _provider = "", _diagnosis = "", _procedures = "", _drug = "", _hold = "";
+    private string? _mode, _tz, _target, _message;
+    private int _qty = 10;
+    private bool _error, _saving, _drugOpen;
+    private List<CaseMedLine> _meds = [];
+
+    private IEnumerable<PrisonCase> Shown =>
+        _filter == "الكل" ? _cases : _cases.Where(c => c.Status == _filter);
+
+    private IEnumerable<PrisonPharmacyItem> DrugOpts =>
+        string.IsNullOrWhiteSpace(_drug)
+            ? _stock
+            : _stock.Where(s => s.DrugName.Contains(_drug, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task SetFilter(string f)
+    {
+        _filter = f;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _cases = (await Ops.ListCasesAsync(_filter == "الكل" ? null : _filter)).ToList();
+        if (_sel is Guid id)
+            await Select(id);
+        else if (_cases.Count > 0)
+            await Select(_cases[0].Id);
+    }
+
+    private async Task Select(Guid id)
+    {
+        _sel = id;
+        _case = _cases.FirstOrDefault(c => c.Id == id) ?? await Ops.GetCaseAsync(id);
+        _inmate = _case is null ? null : await Ops.FindInmateAsync(_case.InmateNo);
+        _mode = _target = _message = null;
+        _provider = _diagnosis = _procedures = _drug = _hold = "";
+        _meds = [];
+        if (_case is not null)
+            _stock = (await Ops.ListStockAsync(HasiaData.PharmacyOf(_case.AtServiceId))).ToList();
+        _tz = HasiaData.FindService(_case?.AtServiceId ?? "p-er")?.Zone ?? "point";
+    }
+
+    private void OnDrugInput(ChangeEventArgs e)
+    {
+        _drug = e.Value?.ToString() ?? "";
+        _drugOpen = true;
+    }
+
+    private async Task CloseDrugSoon()
+    {
+        await Task.Delay(160);
+        _drugOpen = false;
+    }
+
+    private void PickDrug(string name)
+    {
+        _drug = name;
+        _drugOpen = false;
+    }
+
+    private void AddMed()
+    {
+        if (string.IsNullOrWhiteSpace(_drug)) return;
+        _meds.Add(new CaseMedLine(_drug.Trim(), Math.Max(1, _qty)));
+        _drug = "";
+        _drugOpen = false;
+    }
+
+    private static string StatusClass(string s) => s switch
+    {
+        "جارية" => "live",
+        "معلّقة" => "hold",
+        "منجزة" => "done",
+        _ => ""
+    };
+
+    private async Task Act(string action)
+    {
+        if (_case is null) return;
+        _saving = true; _message = null;
+        try
+        {
+            var updated = await Ops.CompleteStepAsync(_case.Id, new CaseStepRequest(
+                _provider, _diagnosis, _procedures, _meds, action,
+                action == "transfer" ? _target : null,
+                action == "hold" ? _hold : null));
+            _error = false;
+            _message = action switch
+            {
+                "complete" => $"أُنجزت الحالة {updated.CaseCode}",
+                "hold" => "تم تعليق الحالة",
+                _ => "تم التحويل"
+            };
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally { _saving = false; }
+    }
+}

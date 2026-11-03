@@ -1,0 +1,139 @@
+@using System.Globalization
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="harasta-stack hasia-page hasia-cases-layout">
+    <div class="harasta-panel">
+        <div class="hasia-seg" style="margin-bottom:0.75rem">
+            <button type="button" class="@(_period == "all" ? "on" : null)" @onclick='() => SetPeriod("all")'>الكل</button>
+            <button type="button" class="@(_period == "day" ? "on" : null)" @onclick='() => SetPeriod("day")'>يوم محدد</button>
+            <button type="button" class="@(_period == "month" ? "on" : null)" @onclick='() => SetPeriod("month")'>الشهر</button>
+        </div>
+        @if (_period == "day")
+        {
+            <NiceDatePicker Value="@_pick.ToString("yyyy-MM-dd")" ValueChanged="OnPick" Max="@DateTime.Today.ToString("yyyy-MM-dd")" AllowClear="false" CssClass="hasia-date-input hasia-period-pick" />
+        }
+        @if (_period == "month")
+        {
+            <NiceMonthPicker Value="_month" ValueChanged="OnMonth" Max="@DateTime.Now.ToString("yyyy-MM")" />
+        }
+        <input class="input" style="margin-top:0.75rem" placeholder="بحث برقم الحالة أو النزيل أو الشكاية" @bind="_q" @bind:event="oninput" />
+        <div class="hasia-case-list" style="margin-top:0.75rem">
+            @if (!Filtered.Any())
+            {
+                <p class="muted" style="padding:1rem 0">لا فرز في هذه الفترة</p>
+            }
+            else
+            {
+                @foreach (var x in Filtered)
+                {
+                    <button type="button" class="hasia-case-item @(_sel == x.Id ? "on" : null)" @onclick="() => _sel = x.Id">
+                        <strong class="mono">@x.CaseCode</strong>
+                        <div class="muted">@x.Complaint</div>
+                        <em class="chip">@x.Status</em>
+                    </button>
+                }
+            }
+        </div>
+        <p class="muted mono" lang="en" style="margin-top:0.5rem">@N(Filtered.Count()) حالة</p>
+    </div>
+
+    @if (Current is not null)
+    {
+        var c = Current;
+        var s = HasiaData.FindService(c.AtServiceId);
+        <div class="harasta-panel">
+            <p class="eyebrow">TRIAGE ARCHIVE</p>
+            <h2 class="mono">@c.CaseCode</h2>
+            <p class="muted mono">#@c.InmateNo · فارز @c.Triager · @c.OpenedTime · @c.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)</p>
+            <div class="hasia-kpi-row" style="margin-top:1rem">
+                <div class="hasia-kpi"><span>الحالة</span><strong>@c.Status</strong></div>
+                <div class="hasia-kpi"><span>الوجهة</span><strong>@(s is null ? c.AtServiceId : $"{HasiaData.ZoneLabel(s.Zone)} · {s.Name}")</strong></div>
+                <div class="hasia-kpi"><span>خطوات</span><strong class="mono" lang="en">@N(c.Steps.Count)</strong></div>
+            </div>
+            <h3 style="margin-top:1rem">الشكاية</h3>
+            <p>@c.Complaint</p>
+            @if (!string.IsNullOrWhiteSpace(c.HoldReason))
+            {
+                <p class="login-error">سبب التعليق: @c.HoldReason</p>
+            }
+            <h3 style="margin-top:1rem">مسار الحالة</h3>
+            @if (c.Steps.Count == 0)
+            {
+                <p class="muted">لم تُستلم بعد — بانتظار القسم المحوَّل إليه</p>
+            }
+            else
+            {
+                @foreach (var st in c.Steps.OrderBy(x => x.SortOrder))
+                {
+                    var z = HasiaData.FindService(st.AtServiceId);
+                    <div class="hasia-load-row">
+                        <span class="mono muted">@st.Time</span>
+                        <strong>@(z?.Name ?? st.AtServiceId) · @st.By</strong>
+                        <span>@(st.Diagnosis ?? st.Note ?? "—")</span>
+                    </div>
+                }
+            }
+            <a class="btn-enter compact" style="margin-top:1rem" href="/stations/hasia/cases" data-enhance-nav="false">فتح محطة الحالات</a>
+        </div>
+    }
+</section>
+
+@code {
+    private List<PrisonCase> _all = [];
+    private string _q = "";
+    private string _period = "all";
+    private string _month = DateTime.Now.ToString("yyyy-MM");
+    private DateOnly _pick = DateOnly.FromDateTime(DateTime.Today);
+    private Guid? _sel;
+
+    private PrisonCase? Current => _all.FirstOrDefault(x => x.Id == _sel);
+
+    private IEnumerable<PrisonCase> Filtered
+    {
+        get
+        {
+            IEnumerable<PrisonCase> q = _all;
+            if (_period == "day") q = q.Where(c => c.Day == _pick);
+            else if (_period == "month") q = q.Where(c => c.Day.ToString("yyyy-MM") == _month);
+            if (!string.IsNullOrWhiteSpace(_q))
+            {
+                q = q.Where(c =>
+                    c.CaseCode.Contains(_q, StringComparison.OrdinalIgnoreCase)
+                    || c.InmateNo.Contains(_q, StringComparison.OrdinalIgnoreCase)
+                    || c.Complaint.Contains(_q, StringComparison.OrdinalIgnoreCase)
+                    || c.Triager.Contains(_q, StringComparison.OrdinalIgnoreCase));
+            }
+            return q;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var live = await Ops.ListCasesAsync();
+        var arch = await Ops.ListCasesAsync(archiveOnly: true);
+        _all = live.Concat(arch).OrderByDescending(c => c.CreatedAt).ToList();
+        _sel = _all.FirstOrDefault()?.Id;
+    }
+
+    private async Task SetPeriod(string p)
+    {
+        _period = p;
+        await Task.CompletedTask;
+    }
+
+    private Task OnPick(string v)
+    {
+        if (DateOnly.TryParse(v, out var d)) _pick = d;
+        return Task.CompletedTask;
+    }
+
+    private Task OnMonth(string v)
+    {
+        _month = v;
+        return Task.CompletedTask;
+    }
+
+    private static string N(int v) => v.ToString(CultureInfo.InvariantCulture);
+}

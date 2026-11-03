@@ -1,0 +1,140 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="harasta-stack hasia-page">
+    <header class="hasia-page-head harasta-panel">
+        <div class="hasia-page-head-icon" aria-hidden="true">℞</div>
+        <div class="hasia-page-head-text">
+            <p class="eyebrow">PHARMACY · @Pharmacy</p>
+            <h1>@(Pharmacy == "external" ? "الصيدلية الخارجية" : "الصيدلية الداخلية")</h1>
+            <p class="lead">@(Pharmacy == "external" ? "صيدلية المشفى" : "صيدلية النقطة الطبية") — الصرف برقم النزيل حصرًا وبالحبة.</p>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="@(_error ? "login-error" : "save-ok")">@_message</div>
+    }
+
+    <div class="hasia-two-col">
+        <div class="harasta-panel">
+            <h2>صرف دواء</h2>
+            <div class="admissions-form">
+                <div class="field"><label>رقم النزيل</label><input class="input mono" @bind="_inmate" /></div>
+                <div class="field">
+                    <label>الدواء</label>
+                    <NiceSelect @bind-Value="_drug" Options="_drugOpts" Placeholder="—" />
+                </div>
+                <div class="field"><label>عدد الحبات</label><input class="input" type="number" min="1" lang="en" inputmode="numeric" @bind="_qty" /></div>
+                <div class="field"><label>بواسطة</label><input class="input" @bind="_by" /></div>
+            </div>
+            <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@_saving" @onclick="() => DispenseAsync(null)">صرف</button>
+        </div>
+
+        <div class="harasta-panel">
+            <div class="queue-head">
+                <h2>وصفات بانتظار الصرف</h2>
+                <em class="chip on">@_rx.Count</em>
+            </div>
+            @if (_rx.Count == 0)
+            {
+                <p class="muted">لا وصفات معلّقة</p>
+            }
+            else
+            {
+                @foreach (var r in _rx)
+                {
+                    <div class="queue-card" style="margin-top:0.5rem">
+                        <div class="queue-card-main">
+                            <div class="hasia-load-row">
+                                <strong>#@r.InmateNo · @r.DrugName</strong>
+                                <span class="mono">@r.Quantity حبة</span>
+                            </div>
+                            <div class="muted">@r.Doctor · @r.CreatedTime · @r.CaseCode</div>
+                            <button type="button" class="chip on" style="margin-top:0.5rem" @onclick="() => DispenseAsync(r)">صرف الوصفة</button>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    <div class="hasia-two-col">
+        <div class="harasta-panel">
+            <h2>المخزون</h2>
+            @foreach (var s in _stock)
+            {
+                <div class="hasia-load-row">
+                    <span>@s.DrugName</span>
+                    <strong class="mono" style="color:@(s.Quantity < 100 ? "#cf5a52" : null)">@s.Quantity حبة</strong>
+                </div>
+            }
+        </div>
+        <div class="harasta-panel">
+            <h2>سجل الصرف</h2>
+            @foreach (var d in _log)
+            {
+                <div class="hasia-load-row">
+                    <div>
+                        <strong>#@d.InmateNo · @d.DrugName</strong>
+                        <div class="muted" style="font-size:0.85rem">@d.DispensedTime · @d.By · @d.CaseCode</div>
+                    </div>
+                    <span class="mono">@d.Quantity</span>
+                </div>
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter] public string Pharmacy { get; set; } = "internal";
+
+    private List<PrisonPharmacyItem> _stock = [];
+    private List<PrisonPrescription> _rx = [];
+    private List<PrisonDispense> _log = [];
+    private IReadOnlyList<NiceSelect.Opt> _drugOpts =>
+    [
+        new("", "—"),
+        .._stock.Select(s => new NiceSelect.Opt(s.DrugName, $"{s.DrugName} ({s.Quantity})")),
+    ];
+    private string _inmate = "", _drug = "", _by = "";
+    private int _qty = 1;
+    private string? _message;
+    private bool _error, _saving;
+
+    protected override async Task OnParametersSetAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _stock = (await Ops.ListStockAsync(Pharmacy)).ToList();
+        _rx = (await Ops.ListPrescriptionsAsync(Pharmacy)).ToList();
+        _log = (await Ops.ListDispensesAsync(Pharmacy)).ToList();
+    }
+
+    private async Task DispenseAsync(PrisonPrescription? rx)
+    {
+        _saving = true; _message = null;
+        try
+        {
+            if (rx is not null)
+            {
+                await Ops.DispenseAsync(new DispenseRequest(Pharmacy, rx.InmateNo, rx.DrugName, rx.Quantity, rx.CaseCode, _by, rx.Id));
+            }
+            else
+            {
+                await Ops.DispenseAsync(new DispenseRequest(Pharmacy, _inmate, _drug, _qty, null, _by, null));
+            }
+            _error = false;
+            _message = "تم الصرف وإنقاص المخزون";
+            _inmate = _drug = "";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally { _saving = false; }
+    }
+}

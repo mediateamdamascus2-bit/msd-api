@@ -1,0 +1,101 @@
+@using MedicalServices.Web.Services.Hasia
+
+<section class="harasta-stack hasia-page">
+    <header class="hasia-page-head harasta-panel">
+        <div class="hasia-page-head-icon" aria-hidden="true">🚑</div>
+        <div class="hasia-page-head-text">
+            <p class="eyebrow">FLEET · متابعة فقط</p>
+            <h1>السيارات الطبية التابعة للسجن</h1>
+            <p class="lead">متابعة السيارات الطبية التابعة لسجن حسيا ومهامها الخارجية — للعرض فقط.</p>
+        </div>
+        <span class="hasia-soft-tag">وضع المتابعة</span>
+    </header>
+
+    <div class="hasia-kpi-row">
+        @foreach (var st in new[] { ("في مهمة", "accent-blue"), ("متوفرة", "accent-green"), ("صيانة", "accent-amber") })
+        {
+            <div class="hasia-kpi @st.Item2">
+                <strong>@HasiaData.Fleet.Count(v => v.Status == st.Item1)</strong>
+                <span>@st.Item1</span>
+            </div>
+        }
+    </div>
+
+    <h2 class="hasia-inline-h">مهام خارجية جارية</h2>
+    <div class="hasia-two-col">
+        @foreach (var v in HasiaData.Fleet.Where(x => x.MissionTo is not null))
+        {
+            <div class="harasta-panel hasia-mission-card">
+                <div class="hasia-mission-head">
+                    <div>
+                        <strong class="mono">@v.Plate</strong>
+                        <p class="muted" style="margin:0.15rem 0 0">@v.Kind · السائق @v.Driver</p>
+                    </div>
+                    <span class="hasia-status live">@v.Stage</span>
+                </div>
+                <div class="hasia-route">
+                    <span>سجن حسيا</span>
+                    <span class="hasia-route-line"></span>
+                    <span>@v.MissionTo</span>
+                </div>
+                <div class="hasia-progress"><i style="width:@v.Progress%"></i></div>
+                <div class="hasia-load-row mono muted">
+                    <span>انطلاق @v.Left</span>
+                    <span>الوصول المتوقع @v.Eta</span>
+                </div>
+                <div class="hasia-kpi-row" style="margin-top:0.75rem">
+                    <div class="hasia-kpi"><span>سبب المهمة</span><strong class="hasia-kpi-sm">@v.MissionReason</strong></div>
+                    <div class="hasia-kpi"><span>النزيل المرافق</span><strong class="hasia-kpi-sm mono">@(v.MissionInmate is null ? "—" : $"#{v.MissionInmate}")</strong></div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="hasia-two-col">
+        <div class="harasta-panel">
+            <h2>كل السيارات الطبية التابعة للسجن</h2>
+            @foreach (var v in HasiaData.Fleet)
+            {
+                <div class="hasia-feed-row">
+                    <span class="hasia-dot @DotClass(v.Status)"></span>
+                    <div style="flex:1">
+                        <strong class="mono">@v.Plate</strong>
+                        <div class="muted" style="font-size:0.85rem">@v.Kind · آخر رحلة @v.LastTrip</div>
+                    </div>
+                    <span class="hasia-status @StatusClass(v.Status)">@v.Status</span>
+                </div>
+            }
+        </div>
+        <div class="harasta-panel">
+            <h2>سجل المهام السابقة</h2>
+            @foreach (var r in HasiaData.TripLog)
+            {
+                <div class="hasia-feed-row" style="align-items:flex-start">
+                    <div style="flex:1">
+                        <strong>@r.To</strong>
+                        <div class="muted" style="font-size:0.85rem">@r.Reason · <span class="mono">@r.Plate</span> · @r.When</div>
+                    </div>
+                    <span class="mono muted">@r.Duration</span>
+                </div>
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    private static string StatusClass(string s) => s switch
+    {
+        "في مهمة" => "live",
+        "متوفرة" => "done",
+        "صيانة" => "hold",
+        _ => ""
+    };
+
+    private static string DotClass(string s) => s switch
+    {
+        "في مهمة" => "blue",
+        "متوفرة" => "green",
+        "صيانة" => "amber",
+        _ => ""
+    };
+}

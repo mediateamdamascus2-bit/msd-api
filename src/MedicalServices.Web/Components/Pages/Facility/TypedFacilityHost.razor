@@ -1,0 +1,142 @@
+@page "/f/{FacilityId}"
+@page "/f/{FacilityId}/{View}"
+@layout SiteShell
+@attribute [Authorize]
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Facilities
+@using MedicalServices.Web.Services.Harasta
+@using MedicalServices.Web.Services.Hasia
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Navigation
+@inject IFacilityCatalog Facilities
+
+<PageTitle>@_title</PageTitle>
+
+@if (_denied)
+{
+    <section class="placeholder-panel">
+        <h1>غير مصرح</h1>
+        <p class="lead">لا تملك صلاحية الوصول إلى واجهة هذا الموقع.</p>
+    </section>
+}
+else if (_facility is null)
+{
+    <section class="placeholder-panel">
+        <h1>الموقع غير موجود</h1>
+        <p class="lead">المعرّف «@FacilityId» غير معرّف.</p>
+    </section>
+}
+else if (_nav is null || !_nav.Ready)
+{
+    <section class="harasta-panel">
+        <p class="eyebrow">COMING SOON</p>
+        <h1>@(_nav?.LabelAr ?? "قسم")</h1>
+        <p class="lead">هذا القسم ضمن واجهة الموقع وسيُبنى لاحقاً.</p>
+        <a class="btn-enter" href="@($"/f/{FacilityId}")">العودة للرئيسية</a>
+    </section>
+}
+else if (_view == "overview")
+{
+    <TypedOverview Facility="_facility" Profile="_profile!" />
+}
+else if (_view == "services" && _facility.Type == FacilityType.PrisonClinic)
+{
+    <TypedListPanel Title="خدمات العيادة" Lead="النقطة الطبية ومشفى السجن"
+                    Items="FacilityTypeProfiles.PrisonServices" />
+}
+else if (_view == "clinics" && _facility.Type == FacilityType.MedicalCenter)
+{
+    <TypedListPanel Title="العيادات" Lead="العيادات العاملة في المركز"
+                    Items="FacilityTypeProfiles.CenterClinics" />
+}
+else if (_view == "stock" && _facility.Type == FacilityType.Warehouse)
+{
+    <TypedListPanel Title="المخزون" Lead="لمحة عن حالة الأصناف"
+                    Items="FacilityTypeProfiles.WarehouseStock" />
+}
+else if (_view == "admissions" && _facility.Type == FacilityType.MedicalUnit)
+{
+    <AdmissionsPanel FacilityId="@_facility.Id" />
+}
+else if (_view == "events" && _facility.Type == FacilityType.MedicalUnit)
+{
+    <UnitEventsPanel FacilityId="@_facility.Id" />
+}
+else if (_view == "needs" && _facility.Type == FacilityType.MedicalUnit)
+{
+    <UnitNeedsPanel FacilityId="@_facility.Id" />
+}
+else if (_view == "wards" && _facility.Type == FacilityType.Hospital)
+{
+    <section class="harasta-panel">
+        <p class="eyebrow">WARDS</p>
+        <h1>الأقسام</h1>
+        <p class="lead">هيكل أولي للمشفى. لحرستا استخدم الواجهة التفصيلية.</p>
+        <a class="btn-enter" href="/f/harasta">فتح واجهة حرستا إن كنت تقصدها</a>
+    </section>
+}
+else
+{
+    <section class="harasta-panel">
+        <h1>@_nav.LabelAr</h1>
+        <p class="lead">محتوى هذا التبويب قيد التجهيز.</p>
+    </section>
+}
+
+@code {
+    [Parameter] public string FacilityId { get; set; } = string.Empty;
+    [Parameter] public string? View { get; set; }
+
+    private Facility? _facility;
+    private FacilityTypeProfile? _profile;
+    private FacilityNavItem? _nav;
+    private string _view = "overview";
+    private string _title = "واجهة الموقع";
+    private bool _denied;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (string.Equals(FacilityId, HarastaData.FacilityId, StringComparison.OrdinalIgnoreCase))
+        {
+            var target = string.IsNullOrWhiteSpace(View) || View.Equals("overview", StringComparison.OrdinalIgnoreCase)
+                ? "/f/harasta"
+                : $"/f/harasta/{View}";
+            Navigation.NavigateTo(target, replace: true);
+            return;
+        }
+
+        if (string.Equals(FacilityId, HasiaData.FacilityId, StringComparison.OrdinalIgnoreCase))
+        {
+            var target = string.IsNullOrWhiteSpace(View) || View.Equals("overview", StringComparison.OrdinalIgnoreCase)
+                ? "/f/hasia"
+                : $"/f/hasia/{View}";
+            Navigation.NavigateTo(target, replace: true);
+            return;
+        }
+
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+        var isAdmin = user.IsInRole(AppRoles.Admin);
+        var linked = user.FindFirst(AppClaimTypes.FacilityId)?.Value;
+        _denied = !(isAdmin || string.Equals(linked, FacilityId, StringComparison.OrdinalIgnoreCase));
+        if (_denied) return;
+
+        _facility = await Facilities.FindAsync(FacilityId);
+        if (_facility is null) return;
+
+        _profile = FacilityTypeProfiles.For(_facility.Type);
+        _view = string.IsNullOrWhiteSpace(View) ? "overview" : View.Trim().ToLowerInvariant();
+        _nav = _profile.Nav.FirstOrDefault(n => n.Key.Equals(_view, StringComparison.OrdinalIgnoreCase));
+
+        if (_nav is null)
+        {
+            Navigation.NavigateTo($"/f/{FacilityId}", replace: true);
+            return;
+        }
+
+        _title = _nav.Key == "overview" ? _facility.NameAr : $"{_nav.LabelAr} — {_facility.NameAr}";
+    }
+}

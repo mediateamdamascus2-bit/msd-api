@@ -1,0 +1,218 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthState
+@inject IReceptionNotifier ReceptionNotifier
+
+<div class="facility-shell harasta-skin">
+    <header class="facility-top">
+        <div class="facility-top-main">
+            @if (_isAdmin)
+            {
+                <a class="icon-btn" href="/admin/facilities" data-enhance-nav="false" title="عودة للإدارة">←</a>
+            }
+            <button type="button" class="icon-btn mobile-only" @onclick="ToggleMenu" aria-label="القائمة">☰</button>
+            <img src="images/logo.png" alt="" width="36" height="36" />
+            <div class="min-w-0">
+                <div class="eyebrow light">مشفى · حرستا</div>
+                <h1 class="facility-title">@HarastaData.TitleAr</h1>
+            </div>
+        </div>
+        <div class="facility-top-actions">
+            @if (_unreadAlerts > 0)
+            {
+                <a class="alert-bell" href="/f/harasta/reception" title="إشعارات الاستقبال">
+                    <span>إشعار</span>
+                    <em>@_unreadAlerts</em>
+                </a>
+            }
+            <AuthorizeView>
+                <Authorized>
+                    <span class="shell-user hide-sm">@context.User.FindFirst(System.Security.Claims.ClaimTypes.GivenName)?.Value</span>
+                    @if (_isAdmin)
+                    {
+                        <span class="role-pill">ADMIN</span>
+                    }
+                    <a class="btn-outline" href="/auth/logout" data-enhance-nav="false">خروج</a>
+                </Authorized>
+            </AuthorizeView>
+        </div>
+    </header>
+
+    @if (_toast is not null)
+    {
+        <div class="facility-toast" role="status">
+            <div>
+                <strong>@_toast.Title</strong>
+                <p>@_toast.Message</p>
+            </div>
+            <div class="facility-toast-actions">
+                <a class="btn-enter compact" href="/f/harasta/reception">فتح الاستقبال</a>
+                <button type="button" class="chip" @onclick="DismissToast">إخفاء</button>
+            </div>
+        </div>
+    }
+
+    @if (_menuOpen)
+    {
+        <div class="facility-drawer-backdrop mobile-only" @onclick="CloseMenu"></div>
+        <nav class="facility-drawer mobile-only" aria-label="أقسام المشفى">
+            @foreach (var item in HarastaData.Nav)
+            {
+                <a class="facility-drawer-item @(_view == item.Key ? "active" : null) @(item.Ready ? null : "soon")"
+                   href="@Href(item.Key)" @onclick="() => OnNavClick(item.Key)">
+                    <span>@item.LabelAr</span>
+                    @if (item.Key == "reception" && _unreadAlerts > 0)
+                    {
+                        <em class="nav-badge">@_unreadAlerts</em>
+                    }
+                    else if (!item.Ready)
+                    {
+                        <em>قريباً</em>
+                    }
+                </a>
+            }
+        </nav>
+    }
+
+    <div class="facility-tabs desktop-only" role="tablist" aria-label="أقسام المشفى">
+        @foreach (var item in HarastaData.Nav)
+        {
+            <a class="facility-tab @(_view == item.Key ? "active" : null) @(item.Ready ? null : "soon")"
+               href="@Href(item.Key)" @onclick="() => OnNavClick(item.Key)">
+                @item.LabelAr
+                @if (item.Key == "reception" && _unreadAlerts > 0)
+                {
+                    <em class="nav-badge">@_unreadAlerts</em>
+                }
+                else if (!item.Ready)
+                {
+                    <em>قريباً</em>
+                }
+            </a>
+        }
+    </div>
+
+    <main class="facility-main">
+        @Body
+    </main>
+
+    <nav class="facility-bottom mobile-only" aria-label="تنقل سريع">
+        @foreach (var item in HarastaData.Nav.Where(n => n.MobilePrimary))
+        {
+            <a class="facility-bottom-item @(_view == item.Key ? "active" : null)" href="@Href(item.Key)">
+                <span>@item.LabelAr</span>
+            </a>
+        }
+        <button type="button" class="facility-bottom-item" @onclick="ToggleMenu">
+            المزيد
+            @if (_unreadAlerts > 0)
+            {
+                <em class="nav-badge">@_unreadAlerts</em>
+            }
+        </button>
+    </nav>
+</div>
+
+@code {
+    private string _view = "overview";
+    private bool _menuOpen;
+    private bool _isAdmin;
+    private ReceptionAlert? _toast;
+    private int _unreadAlerts;
+    private CancellationTokenSource? _toastCts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        _isAdmin = state.User.IsInRole(AppRoles.Admin);
+        UpdateViewFromUri();
+        Navigation.LocationChanged += OnLocationChanged;
+        ReceptionNotifier.AlertReceived += OnReceptionAlert;
+    }
+
+    private void OnReceptionAlert(ReceptionAlert alert)
+    {
+        if (!string.Equals(alert.FacilityId, HarastaData.FacilityId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _ = InvokeAsync(() =>
+        {
+            _toast = alert;
+            _unreadAlerts++;
+            RestartToastTimer();
+            StateHasChanged();
+        });
+    }
+
+    private void RestartToastTimer()
+    {
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+        _toastCts = new CancellationTokenSource();
+        var token = _toastCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(12000, token);
+                await InvokeAsync(() =>
+                {
+                    if (!token.IsCancellationRequested)
+                    {
+                        _toast = null;
+                        StateHasChanged();
+                    }
+                });
+            }
+            catch (TaskCanceledException)
+            {
+                // ignored
+            }
+        });
+    }
+
+    private void DismissToast() => _toast = null;
+
+    private void OnNavClick(string key)
+    {
+        if (key == "reception")
+            _unreadAlerts = 0;
+        CloseMenu();
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        UpdateViewFromUri();
+        if (_view == "reception")
+            _unreadAlerts = 0;
+        _menuOpen = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdateViewFromUri()
+    {
+        var path = Navigation.ToBaseRelativePath(Navigation.Uri).Trim('/');
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        _view = parts.Length >= 3 ? parts[2] : "overview";
+        if (!HarastaData.Nav.Any(n => n.Key.Equals(_view, StringComparison.OrdinalIgnoreCase)))
+            _view = "overview";
+    }
+
+    private static string Href(string view) =>
+        view.Equals("overview", StringComparison.OrdinalIgnoreCase) ? "/f/harasta" : $"/f/harasta/{view}";
+
+    private void ToggleMenu() => _menuOpen = !_menuOpen;
+    private void CloseMenu() => _menuOpen = false;
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        ReceptionNotifier.AlertReceived -= OnReceptionAlert;
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+    }
+}

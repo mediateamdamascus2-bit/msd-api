@@ -1,0 +1,335 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IDepartmentService Departments
+@implements IDisposable
+
+<section class="harasta-stack sv-clinics sv-depts">
+    @{
+        var present = _board.Sum(d => d.Present + d.Queued);
+        var hot = _board.Count(d => LoadScore(d) >= 3);
+        var clear = _board.Count(d => LoadScore(d) == 0);
+        var busy = _board.Count(d => LoadScore(d) > 0);
+        var finding = present == 0
+            ? "لا حالات ظاهرة في أقسام التحويل حالياً."
+            : hot > 0
+                ? $"{present} حالة قيد المتابعة · {hot} أقسام بضغط مرتفع."
+                : $"{present} حالة موزّعة على {busy} أقسام.";
+    }
+
+    <header class="sv-hero">
+        <div class="sv-hero-copy">
+            <p class="sv-role">متابعة المسؤول · بدون إدخال</p>
+            <h1>لوحة متابعة أقسام التحويل</h1>
+            <p class="sv-lead">@finding</p>
+            <p class="sv-note">المحوَّلون من العيادات: أسرّة، عناية، عمليات، مخبر، صيدلية، أشعة. الإنهاء يتم من محطة القسم.</p>
+        </div>
+        <div class="sv-hero-actions">
+            <button type="button" class="sv-btn ghost" disabled="@_busy" @onclick="RefreshAllAsync">تحديث الآن</button>
+        </div>
+    </header>
+
+    <div class="sv-kpis" aria-label="مؤشرات أقسام التحويل">
+        <article class="sv-kpi">
+            <span>أقسام عليها حالات</span>
+            <strong>@busy</strong>
+            <small>من @_board.Count</small>
+        </article>
+        <article class="sv-kpi accent">
+            <span>إجمالي الحالات</span>
+            <strong>@present</strong>
+            <small>بانتظار أو قيد القسم</small>
+        </article>
+        <article class="sv-kpi @(hot > 0 ? "alert" : null)">
+            <span>ضغط مرتفع</span>
+            <strong>@hot</strong>
+            <small>حسب الحمل والسعة</small>
+        </article>
+        <article class="sv-kpi calm">
+            <span>بلا حالات</span>
+            <strong>@clear</strong>
+            <small>أقسام هادئة</small>
+        </article>
+    </div>
+
+    <div class="sv-filters">
+        <button type="button" class="sv-chip @(_view == "all" ? "on" : null)" @onclick='() => _view = "all"'>الكل</button>
+        <button type="button" class="sv-chip @(_view == "hot" ? "on" : null)" @onclick='() => _view = "hot"'>ضغط مرتفع</button>
+        <button type="button" class="sv-chip @(_view == "busy" ? "on" : null)" @onclick='() => _view = "busy"'>فيها حالات</button>
+        <button type="button" class="sv-chip @(_view == "clear" ? "on" : null)" @onclick='() => _view = "clear"'>هادئة</button>
+    </div>
+
+    <div class="sv-layout">
+        <section class="sv-board harasta-panel">
+            <div class="sv-section-head">
+                <div>
+                    <p class="sv-label">خريطة الأقسام</p>
+                    <h2>تقييم الحمل الحالي</h2>
+                </div>
+                <span class="sv-refresh">يتحدّث كل 30 ثانية</span>
+            </div>
+
+            <div class="sv-grid">
+                @foreach (var d in VisibleBoard)
+                {
+                    var score = LoadScore(d);
+                    var level = Pressure(score);
+                    <button type="button"
+                            class="sv-card level-@level @(_dept == d.Name ? "on" : null)"
+                            @onclick="() => SelectAsync(d.Name)">
+                        <div class="sv-card-top">
+                            <strong>@d.Name</strong>
+                            <em class="sv-badge @level">@PressureLabel(level)</em>
+                        </div>
+                        <div class="sv-card-metrics">
+                            @if (d.Capacity is int cap)
+                            {
+                                <div>
+                                    <b>@cap</b>
+                                    <span>السعة</span>
+                                </div>
+                                <div>
+                                    <b class="@(d.Occupied > 0 ? "hot" : null)">@d.Occupied</b>
+                                    <span>مشغول</span>
+                                </div>
+                                <div>
+                                    <b>@d.Free</b>
+                                    <span>فارغ</span>
+                                </div>
+                                <div>
+                                    <b>@d.TodayReferrals</b>
+                                    <span>توجيهات اليوم</span>
+                                </div>
+                            }
+                            else
+                            {
+                                <div>
+                                    <b class="@(d.Present > 0 ? "hot" : null)">@d.Present</b>
+                                    <span>حالات الآن</span>
+                                </div>
+                                <div>
+                                    <b>@d.Queued</b>
+                                    <span>بالدور</span>
+                                </div>
+                                <div>
+                                    <b>@d.AvgWaitLabel</b>
+                                    <span>متوسط الانتظار</span>
+                                </div>
+                                <div>
+                                    <b>@d.MaxWaitLabel</b>
+                                    <span>أطول انتظار</span>
+                                </div>
+                            }
+                        </div>
+                        <div class="sv-bar" aria-hidden="true">
+                            <span style="width:@BarWidth(d)%"></span>
+                        </div>
+                    </button>
+                }
+            </div>
+        </section>
+
+        <aside class="sv-detail harasta-panel">
+            @if (string.IsNullOrWhiteSpace(_dept))
+            {
+                <div class="sv-empty">
+                    <strong>اختر قسماً للمتابعة</strong>
+                    <p>ستظهر الحالات المحوَّلة للتقييم والمراقبة — دون إنهاء أو إعادة من هنا.</p>
+                </div>
+            }
+            else
+            {
+                var live = _board.FirstOrDefault(x => x.Name == _dept);
+                <div class="sv-detail-head">
+                    <div>
+                        <p class="sv-label">متابعة القسم</p>
+                        <h2>@_dept</h2>
+                    </div>
+                    <strong class="sv-queue-n">@_queue.Count</strong>
+                </div>
+
+                @if (live is not null)
+                {
+                    <div class="sv-eval">
+                        <article><span>تقييم الحمل</span><strong>@PressureLabel(Pressure(LoadScore(live)))</strong></article>
+                        <article><span>توجيهات اليوم</span><strong>@live.TodayReferrals</strong></article>
+                        <article><span>متوسط الانتظار</span><strong>@live.AvgWaitLabel</strong></article>
+                        <article><span>أطول انتظار</span><strong>@live.MaxWaitLabel</strong></article>
+                    </div>
+                }
+
+                @if (_loading)
+                {
+                    <p class="sv-muted">جاري تحميل الحالات...</p>
+                }
+                else if (_queue.Count == 0)
+                {
+                    <div class="sv-empty compact">
+                        <strong>لا حالات في هذا القسم</strong>
+                        <p>القسم هادئ حالياً.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="sv-queue">
+                        @foreach (var (item, i) in _queue.Select((x, i) => (x, i)))
+                        {
+                            var waitMin = (int)Math.Max(0, (DateTimeOffset.UtcNow - item.OpenedAt).TotalMinutes);
+                            <article class="sv-patient">
+                                <div class="sv-patient-rank">@(i + 1)</div>
+                                <div class="sv-patient-main">
+                                    <strong>@item.PatientName</strong>
+                                    <span>
+                                        @item.CaseNumber · من عيادة @(item.CurrentClinic ?? item.BookedClinic)
+                                    </span>
+                                </div>
+                                <div class="sv-patient-meta">
+                                    <em class="sv-status">@PatientCaseStatusLabels.ToArabic(item.Status)</em>
+                                    <span>@(waitMin < 60 ? $"{waitMin} د" : $"{waitMin / 60} س") منذ الفتح</span>
+                                    @if (!string.IsNullOrWhiteSpace(item.DepartmentNote))
+                                    {
+                                        <span>ملاحظة: @item.DepartmentNote</span>
+                                    }
+                                </div>
+                            </article>
+                        }
+                    </div>
+                }
+
+                <div class="sv-station-hint">
+                    <span>للموظفين الذين يعالجون الحالات:</span>
+                    <a href="@($"/stations/harasta/dept/{Uri.EscapeDataString(_dept)}")" data-enhance-nav="false">
+                        فتح محطة القسم
+                    </a>
+                </div>
+            }
+        </aside>
+    </div>
+</section>
+
+@code {
+    private IReadOnlyList<DeptLiveCard> _board = [];
+    private string _dept = string.Empty;
+    private string _view = "all";
+    private List<PatientCase> _queue = [];
+    private bool _loading;
+    private bool _busy;
+    private System.Threading.Timer? _timer;
+
+    private IEnumerable<DeptLiveCard> VisibleBoard =>
+        (_view switch
+        {
+            "hot" => _board.Where(d => LoadScore(d) >= 3),
+            "busy" => _board.Where(d => LoadScore(d) > 0),
+            "clear" => _board.Where(d => LoadScore(d) == 0),
+            _ => _board
+        }).OrderByDescending(LoadScore).ThenBy(d => d.Name);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAllAsync();
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await RefreshAllAsync();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private async Task RefreshAllAsync()
+    {
+        _busy = true;
+        try
+        {
+            try
+            {
+                _board = await Departments.GetLiveBoardAsync(HarastaData.FacilityId);
+            }
+            catch
+            {
+                var counts = await Departments.GetQueueCountsAsync(HarastaData.FacilityId);
+                _board = HarastaData.Departments.Select(n =>
+                {
+                    var cap = HarastaData.DepartmentCapacity.GetValueOrDefault(n);
+                    var q = counts.GetValueOrDefault(n);
+                    return new DeptLiveCard(
+                        n,
+                        HarastaData.DepartmentTone.GetValueOrDefault(n, "cyan"),
+                        cap,
+                        q,
+                        0,
+                        cap ?? 0,
+                        q,
+                        0,
+                        "—",
+                        "—");
+                }).ToList();
+            }
+
+            if (!string.IsNullOrWhiteSpace(_dept))
+                await ReloadQueueAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SelectAsync(string dept)
+    {
+        _dept = dept;
+        await ReloadQueueAsync();
+    }
+
+    private async Task ReloadQueueAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_dept)) return;
+        _loading = true;
+        try
+        {
+            _queue = (await Departments.GetQueueAsync(HarastaData.FacilityId, _dept)).ToList();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static int LoadScore(DeptLiveCard d)
+    {
+        if (d.Capacity is int cap and > 0)
+        {
+            var pct = d.Occupied * 100.0 / cap;
+            if (pct >= 90 || d.Queued >= 3) return 5;
+            if (pct >= 75 || d.Queued >= 2) return 3;
+            if (d.Occupied > 0 || d.Queued > 0 || d.Present > 0) return 1;
+            return 0;
+        }
+
+        var n = Math.Max(d.Present, d.Queued);
+        return n >= 5 ? 5 : n >= 3 ? 3 : n > 0 ? 1 : 0;
+    }
+
+    private static string Pressure(int score) =>
+        score >= 5 ? "critical" : score >= 3 ? "high" : score > 0 ? "mid" : "ok";
+
+    private static string PressureLabel(string level) => level switch
+    {
+        "critical" => "حرج",
+        "high" => "مرتفع",
+        "mid" => "متوسط",
+        _ => "مستقر"
+    };
+
+    private static double BarWidth(DeptLiveCard d)
+    {
+        if (d.Capacity is int cap and > 0)
+            return Math.Min(100, d.Occupied * 100.0 / cap);
+        return Math.Min(100, Math.Max(d.Present, d.Queued) / 8.0 * 100);
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

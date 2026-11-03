@@ -1,0 +1,93 @@
+@using System.Globalization
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="harasta-stack hasia-page">
+    <header class="hasia-page-head harasta-panel">
+        <div class="hasia-page-head-icon" aria-hidden="true">℞</div>
+        <div class="hasia-page-head-text">
+            <p class="eyebrow">STATS · PHARMACY</p>
+            <h1>@(Pharmacy == "external" ? "إحصائيات الصيدلية الخارجية" : "إحصائيات الصيدلية الداخلية")</h1>
+            <p class="lead">متابعة المسؤول فقط — الصرف من المحطة المستقلة.</p>
+        </div>
+        <a class="btn-enter compact" href="/stations/hasia/@(Pharmacy == "external" ? "ph-external" : "ph-internal")" data-enhance-nav="false">
+            @(Pharmacy == "external" ? "فتح محطة الصيدلية الخارجية" : "فتح محطة الصيدلية الداخلية")
+        </a>
+    </header>
+
+    <div class="hasia-kpi-row">
+        <div class="hasia-kpi"><strong class="mono" lang="en">@N(_stock.Count)</strong><span>أصناف</span></div>
+        <div class="hasia-kpi accent-cyan"><strong class="mono" lang="en">@N(_stock.Sum(s => s.Quantity))</strong><span>إجمالي الحبات</span></div>
+        <div class="hasia-kpi accent-amber"><strong class="mono" lang="en">@N(_rx.Count)</strong><span>وصفات معلّقة</span></div>
+        <div class="hasia-kpi" style="@(_low.Count > 0 ? "border-color:#cf5a52" : null)"><strong class="mono" lang="en">@N(_low.Count)</strong><span>منخفضة المخزون</span></div>
+    </div>
+
+    <div class="hasia-two-col">
+        <div class="harasta-panel">
+            <h2>وصفات بانتظار الصرف</h2>
+            @if (_rx.Count == 0)
+            {
+                <p class="muted">لا وصفات معلّقة</p>
+            }
+            else
+            {
+                @foreach (var r in _rx)
+                {
+                    <div class="hasia-load-row">
+                        <strong class="mono">#@r.InmateNo</strong>
+                        <span>@r.DrugName</span>
+                        <em class="mono muted" lang="en">@r.Quantity حبة</em>
+                    </div>
+                }
+            }
+        </div>
+        <div class="harasta-panel">
+            <h2>@(_low.Count > 0 ? "مخزون منخفض" : "آخر الصرف")</h2>
+            @if (_low.Count > 0)
+            {
+                @foreach (var s in _low)
+                {
+                    <div class="hasia-load-row">
+                        <span>@s.DrugName</span>
+                        <strong class="mono" lang="en" style="color:#cf5a52">@N(s.Quantity)</strong>
+                    </div>
+                }
+            }
+            else if (_log.Count == 0)
+            {
+                <p class="muted">لا حركة بعد</p>
+            }
+            else
+            {
+                @foreach (var d in _log.Take(12))
+                {
+                    <div class="hasia-load-row">
+                        <strong class="mono">#@d.InmateNo</strong>
+                        <span>@d.DrugName</span>
+                        <em class="mono muted" lang="en">@d.Quantity · @d.DispensedTime</em>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter] public string Pharmacy { get; set; } = "internal";
+
+    private List<PrisonPharmacyItem> _stock = [];
+    private List<PrisonPharmacyItem> _low = [];
+    private List<PrisonPrescription> _rx = [];
+    private List<PrisonDispense> _log = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _stock = (await Ops.ListStockAsync(Pharmacy)).ToList();
+        _low = _stock.Where(s => s.Quantity < 100).OrderBy(s => s.Quantity).ToList();
+        _rx = (await Ops.ListPrescriptionsAsync(Pharmacy)).ToList();
+        _log = (await Ops.ListDispensesAsync(Pharmacy)).ToList();
+    }
+
+    private static string N(int v) => v.ToString(CultureInfo.InvariantCulture);
+}

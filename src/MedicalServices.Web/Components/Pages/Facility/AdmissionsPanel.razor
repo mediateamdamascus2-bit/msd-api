@@ -1,0 +1,138 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services
+@inject IAdmissionsService Admissions
+@inject AuthenticationStateProvider AuthState
+
+<section class="harasta-stack">
+    <div class="harasta-panel">
+        <p class="eyebrow">ADMISSIONS</p>
+        <h1>القبولات</h1>
+        <p class="lead">تحديث أرقام اليوم للوحدة — يُحفظ مباشرة في قاعدة البيانات.</p>
+
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <div class="@(_error ? "login-error" : "save-ok")" style="margin-top:0.85rem">@_message</div>
+        }
+
+        @if (_loading)
+        {
+            <p class="muted" style="margin-top:1rem">جاري التحميل...</p>
+        }
+        else
+        {
+            <div class="admissions-form">
+                <div class="field">
+                    <label for="adm">قبولات اليوم</label>
+                    <input id="adm" class="input" type="number" min="0" @bind="_admissions" />
+                </div>
+                <div class="field">
+                    <label for="occ">أسرّة مشغولة</label>
+                    <input id="occ" class="input" type="number" min="0" @bind="_occupied" />
+                </div>
+                <div class="field">
+                    <label for="avl">أسرّة متاحة</label>
+                    <input id="avl" class="input" type="number" min="0" @bind="_available" />
+                </div>
+                <div class="field">
+                    <label for="tr">تحويلات</label>
+                    <input id="tr" class="input" type="number" min="0" @bind="_transfers" />
+                </div>
+                <div class="field" style="grid-column:1 / -1">
+                    <label for="notes">ملاحظات</label>
+                    <input id="notes" class="input" @bind="_notes" placeholder="اختياري" />
+                </div>
+            </div>
+
+            <div class="ops-grid" style="margin-top:1rem">
+                <article class="ops-card"><span>قبولات اليوم</span><strong>@_admissions</strong><em>إدخال</em></article>
+                <article class="ops-card"><span>أسرّة مشغولة</span><strong>@_occupied</strong><em>حالياً</em></article>
+                <article class="ops-card"><span>أسرّة متاحة</span><strong>@_available</strong><em>جاهزة</em></article>
+                <article class="ops-card"><span>تحويلات</span><strong>@_transfers</strong><em>اليوم</em></article>
+            </div>
+
+            <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@_saving" @onclick="SaveAsync">
+                @(_saving ? "جاري الحفظ..." : "حفظ التحديث")
+            </button>
+
+            @if (_row is not null)
+            {
+                <p class="muted" style="margin-top:0.75rem">
+                    آخر تحديث: @_row.UpdatedAt.ToLocalTime().ToString("g") · بواسطة @_row.UpdatedBy
+                </p>
+            }
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string FacilityId { get; set; } = string.Empty;
+
+    private DailyAdmission? _row;
+    private int _admissions;
+    private int _occupied;
+    private int _available;
+    private int _transfers;
+    private string _notes = string.Empty;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _error;
+    private string? _message;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _message = null;
+        try
+        {
+            _row = await Admissions.GetOrCreateTodayAsync(FacilityId);
+            ApplyRow(_row);
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = "تعذر تحميل القبولات: " + ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ApplyRow(DailyAdmission row)
+    {
+        _admissions = row.AdmissionsCount;
+        _occupied = row.OccupiedBeds;
+        _available = row.AvailableBeds;
+        _transfers = row.TransfersCount;
+        _notes = row.Notes ?? string.Empty;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _message = null;
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var userName = state.User.Identity?.Name ?? "unknown";
+
+            _row = await Admissions.UpsertTodayAsync(
+                FacilityId,
+                new AdmissionsUpdate(_admissions, _occupied, _available, _transfers, _notes),
+                userName);
+
+            ApplyRow(_row);
+            _error = false;
+            _message = "تم حفظ تحديث القبولات بنجاح.";
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = "تعذر الحفظ: " + ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

@@ -1,0 +1,85 @@
+@using System.Globalization
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="harasta-stack hasia-page">
+    <header class="hasia-page-head harasta-panel">
+        <div class="hasia-page-head-icon" aria-hidden="true">✚</div>
+        <div class="hasia-page-head-text">
+            <p class="eyebrow">STATS · CASES</p>
+            <h1>إحصائيات الحالات</h1>
+            <p class="lead">متابعة المسؤول فقط — التشخيص والتحويل من محطة الحالات المستقلة.</p>
+        </div>
+        <a class="btn-enter compact" href="/stations/hasia/cases" data-enhance-nav="false">فتح محطة الحالات</a>
+    </header>
+
+    <div class="hasia-kpi-row">
+        <div class="hasia-kpi"><strong class="mono" lang="en">@N(_all.Count)</strong><span>إجمالي</span></div>
+        <div class="hasia-kpi accent-cyan"><strong class="mono" lang="en">@N(_live.Count)</strong><span>جارية</span></div>
+        <div class="hasia-kpi accent-amber"><strong class="mono" lang="en">@N(_held.Count)</strong><span>معلّقة</span></div>
+        <div class="hasia-kpi accent-green"><strong class="mono" lang="en">@N(_done)</strong><span>منجزة</span></div>
+    </div>
+
+    <div class="hasia-two-col">
+        <div class="harasta-panel">
+            <div class="hasia-section-title">
+                <h2>الحمل على الأقسام</h2>
+                <span class="hasia-soft-tag mono" lang="en">@_load.Values.Sum() نشط</span>
+            </div>
+            @foreach (var zone in new[] { "point", "hospital" })
+            {
+                <p class="hasia-zone-label @(zone == "point" ? "point" : "hosp")">@HasiaData.ZoneLabel(zone)</p>
+                <div class="hasia-load-cards" style="margin-bottom:0.75rem">
+                    @foreach (var s in HasiaData.Services.Where(x => x.Zone == zone && !x.Id.EndsWith("-ph")))
+                    {
+                        var n = _load.GetValueOrDefault(s.Id);
+                        <div class="hasia-load-card @(n > 0 ? "live" : null)">
+                            <span>@s.Name</span>
+                            <strong class="mono" lang="en">@N(n)</strong>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+        <div class="harasta-panel">
+            <h2>الحالات الحية</h2>
+            @if (_live.Count + _held.Count == 0)
+            {
+                <p class="muted">لا حالات جارية</p>
+            }
+            else
+            {
+                @foreach (var c in _live.Concat(_held).Take(12))
+                {
+                    <div class="hasia-load-row">
+                        <strong class="mono">@c.CaseCode</strong>
+                        <span>@c.Complaint</span>
+                        <em class="chip">@c.Status</em>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    private List<PrisonCase> _all = [];
+    private List<PrisonCase> _live = [];
+    private List<PrisonCase> _held = [];
+    private Dictionary<string, int> _load = new();
+    private int _done;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var live = await Ops.ListCasesAsync();
+        var arch = await Ops.ListCasesAsync(archiveOnly: true);
+        _all = live.Concat(arch).ToList();
+        _live = live.Where(c => c.Status == "جارية").ToList();
+        _held = live.Where(c => c.Status == "معلّقة").ToList();
+        _done = _all.Count(c => c.Status == "منجزة");
+        _load = await Ops.LoadByServiceAsync();
+    }
+
+    private static string N(int v) => v.ToString(CultureInfo.InvariantCulture);
+}

@@ -1,0 +1,180 @@
+@using System.Text.Json
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="hasia-page hasia-cases-layout">
+    <div class="harasta-panel">
+        <p class="eyebrow">INMATES</p>
+        <h1>سجل النزلاء</h1>
+        <p class="lead">الأضابير الطبية حسب رمز النزيل</p>
+        <input class="input" style="margin-top:0.75rem" placeholder="بحث برقم النزيل أو رقم الملف" @bind="_q" @bind:event="oninput" />
+        <div class="hasia-case-list" style="margin-top:0.75rem">
+            @foreach (var x in Filtered)
+            {
+                <button type="button" class="hasia-case-item @(_sel == x.InmateNo ? "on" : null)" @onclick="() => _sel = x.InmateNo">
+                    <strong class="mono" style="color:@(x.Sex == "أنثى" ? "#d8467f" : null)">#@x.InmateNo</strong>
+                    <div class="muted mono">ملف @x.FileNo</div>
+                </button>
+            }
+        </div>
+    </div>
+
+    @if (Current is not null)
+    {
+        var i = Current;
+        <div class="harasta-panel">
+            <div class="queue-head">
+                <div>
+                    <h2 class="mono" style="color:@(i.Sex == "أنثى" ? "#d8467f" : null)">نزيل #@i.InmateNo</h2>
+                    <p class="muted">ملف @i.FileNo · دخول @i.EntryDate</p>
+                </div>
+                <button type="button" class="btn-enter compact" @onclick="() => _full = i">الإضبارة الكاملة</button>
+            </div>
+            <h3>أماكن الاحتجاز</h3>
+            @foreach (var st in i.Stays.OrderBy(s => s.SortOrder))
+            {
+                <div class="hasia-load-row">
+                    <strong>@st.Place @(string.IsNullOrEmpty(st.Exit) ? "(حاليًا)" : "")</strong>
+                    <span class="mono muted">@st.Entry ← @(st.Exit ?? "الآن")</span>
+                </div>
+            }
+            <div class="hasia-kpi-row" style="margin-top:1rem">
+                <div class="hasia-kpi"><span>زمرة الدم</span><strong style="font-size:1.1rem">@i.BloodType</strong></div>
+                <div class="hasia-kpi"><span>الجنس</span><strong style="font-size:1.1rem">@i.Sex</strong></div>
+                <div class="hasia-kpi"><span>مزمن</span><strong style="font-size:1.1rem">@(string.IsNullOrWhiteSpace(i.ChronicCsv) ? "—" : i.ChronicCsv)</strong></div>
+                <div class="hasia-kpi"><span>تحسس</span><strong style="font-size:1.1rem">@i.Allergies</strong></div>
+            </div>
+            <h3 style="margin-top:1rem">الشكايات المرتبطة</h3>
+            @foreach (var c in _cases.Where(c => c.InmateNo == i.InmateNo))
+            {
+                <div class="hasia-load-row"><span>@c.Complaint</span><em class="chip">@c.Status</em></div>
+            }
+        </div>
+    }
+</section>
+
+@if (_full is not null)
+{
+    <div class="hasia-modal-backdrop" @onclick="() => _full = null">
+        <div class="hasia-modal wide @(_full.Sex == "أنثى" ? "hasia-pink" : null)" @onclick:stopPropagation="true">
+            <div class="hasia-modal-head">
+                <div>
+                    <p class="eyebrow" style="color:#fff">MEDICAL FILE</p>
+                    <h2 class="mono" style="color:#fff;margin:0">#@_full.InmateNo</h2>
+                    <p style="color:rgba(255,255,255,.8);margin:0">ملف @_full.FileNo · @_full.Place</p>
+                </div>
+                <button type="button" class="chip" @onclick="() => _full = null">إغلاق</button>
+            </div>
+            <div class="hasia-modal-body">
+                <h3>معلومات النزيل</h3>
+                <div class="hasia-kpi-row">
+                    <div class="hasia-kpi"><span>الجنسية</span><strong style="font-size:1rem">@_full.Nationality</strong></div>
+                    <div class="hasia-kpi"><span>مكان الولادة</span><strong style="font-size:1rem">@(_full.BirthPlace ?? "—")</strong></div>
+                    <div class="hasia-kpi"><span>الميلاد</span><strong style="font-size:1rem">@(_full.BirthDate ?? "—")</strong></div>
+                    <div class="hasia-kpi"><span>الحالة</span><strong style="font-size:1rem">@_full.Marital</strong></div>
+                </div>
+                <h3 style="margin-top:1rem">التشخيصات</h3>
+                @foreach (var d in ParseDiags(_full.DiagnosesJson))
+                {
+                    <div class="hasia-load-row"><span>@d.D</span><span class="muted">@d.By · @d.T</span></div>
+                }
+                @if (!ParseDiags(_full.DiagnosesJson).Any())
+                {
+                    <p class="muted">لا توجد تشخيصات</p>
+                }
+
+                <h3 style="margin-top:1rem">المرفقات</h3>
+                @{
+                    var atts = ParseAttachments(_full.RecordJson);
+                }
+                @if (atts.Count == 0)
+                {
+                    <p class="muted">لا توجد مرفقات</p>
+                }
+                else
+                {
+                    <div class="hasia-attach-grid">
+                        @foreach (var a in atts)
+                        {
+                            <a class="hasia-attach-card" href="@a.Url" target="_blank" rel="noreferrer">
+                                @if (a.Kind == "image")
+                                {
+                                    <img src="@a.Url" alt="@a.Name" />
+                                }
+                                else
+                                {
+                                    <div class="hasia-attach-pdf">PDF</div>
+                                }
+                                <div>
+                                    <b title="@a.Name">@a.Name</b>
+                                    <em class="mono" lang="en">@((a.Size / 1024.0).ToString("0", System.Globalization.CultureInfo.InvariantCulture)) KB</em>
+                                </div>
+                            </a>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<PrisonInmate> _inmates = [];
+    private List<PrisonCase> _cases = [];
+    private string _q = "";
+    private string? _sel;
+    private PrisonInmate? _full;
+
+    private PrisonInmate? Current =>
+        _inmates.FirstOrDefault(x => x.InmateNo == _sel);
+
+    private IEnumerable<PrisonInmate> Filtered =>
+        _inmates.Where(i => string.IsNullOrWhiteSpace(_q)
+            || i.InmateNo.Contains(_q, StringComparison.OrdinalIgnoreCase)
+            || i.FileNo.Contains(_q, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        _inmates = (await Ops.ListInmatesAsync()).ToList();
+        var live = await Ops.ListCasesAsync();
+        var arch = await Ops.ListCasesAsync(archiveOnly: true);
+        _cases = live.Concat(arch).ToList();
+        _sel = _inmates.FirstOrDefault()?.InmateNo;
+    }
+
+    private static IEnumerable<Diag> ParseDiags(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<Diag>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+        }
+        catch { return []; }
+    }
+
+    private static List<AttachView> ParseAttachments(string? recordJson)
+    {
+        if (string.IsNullOrWhiteSpace(recordJson)) return [];
+        try
+        {
+            using var doc = JsonDocument.Parse(recordJson);
+            if (!doc.RootElement.TryGetProperty("attachments", out var arr) || arr.ValueKind != JsonValueKind.Array)
+                return [];
+            var list = new List<AttachView>();
+            foreach (var el in arr.EnumerateArray())
+            {
+                var name = el.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                var kind = el.TryGetProperty("kind", out var k) ? k.GetString() ?? "pdf" : "pdf";
+                var url = el.TryGetProperty("url", out var u) ? u.GetString() ?? "" : "";
+                var size = el.TryGetProperty("size", out var s) && s.TryGetInt64(out var sz) ? sz : 0;
+                if (!string.IsNullOrWhiteSpace(url))
+                    list.Add(new AttachView(name, kind, url, size));
+            }
+            return list;
+        }
+        catch { return []; }
+    }
+
+    private sealed record Diag(string T, string D, string By);
+    private sealed record AttachView(string Name, string Kind, string Url, long Size);
+}

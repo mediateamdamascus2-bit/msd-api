@@ -1,0 +1,65 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Facilities
+
+<section class="harasta-stack">
+    @if (_isAdmin)
+    {
+        <div class="admin-visit-banner">
+            <span>تدخل هذه الواجهة بصلاحية الإدارة</span>
+            <a href="/admin/facilities" data-enhance-nav="false">العودة لقائمة المواقع</a>
+        </div>
+    }
+
+    <div class="harasta-panel">
+        <p class="eyebrow">@Profile.Eyebrow</p>
+        <h1>@Facility.NameAr</h1>
+        <p class="lead">@Profile.OverviewLead</p>
+        <p class="muted">@Facility.ProvinceAr · <code dir="ltr">/f/@Facility.Id</code></p>
+    </div>
+
+    <div class="kpi-grid">
+        @foreach (var kpi in Profile.Kpis)
+        {
+            <article class="kpi-card">
+                <strong>@kpi.Value</strong>
+                <span>@kpi.Label</span>
+            </article>
+        }
+    </div>
+
+    <div class="harasta-panel">
+        <div class="section-head">
+            <h2>إجراءات سريعة</h2>
+            <p>الأقسام الجاهزة متاحة الآن — الباقي يُفعّل تباعاً</p>
+        </div>
+        <div class="quick-links">
+            @foreach (var item in Profile.Nav.Where(n => n.Key != "overview"))
+            {
+                var href = $"/f/{Facility.Id}/{item.Key}";
+                if (item.Ready)
+                {
+                    <a class="quick-link" href="@href">@item.LabelAr</a>
+                }
+                else
+                {
+                    <a class="quick-link muted" href="@href">@item.LabelAr · قريباً</a>
+                }
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Facility Facility { get; set; } = default!;
+    [Parameter, EditorRequired] public FacilityTypeProfile Profile { get; set; } = default!;
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _isAdmin;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is null) return;
+        var state = await AuthStateTask;
+        _isAdmin = state.User.IsInRole(MedicalServices.Domain.Enums.AppRoles.Admin);
+    }
+}

@@ -1,0 +1,264 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IPatientFileService Files
+@implements IDisposable
+
+<section class="harasta-stack sv-clinics sv-files">
+    @{
+        var active = _stats.InDepartment + _stats.Returned;
+        var finding = _stats.Total == 0
+            ? "لا ملفات ظاهرة بعد — ستظهر الأضابير هنا فور فتحها من المحطات."
+            : active > 0
+                ? $"{_stats.Total} إضبارة · {_stats.InDepartment} في الأقسام · {_stats.Returned} مُعادة للاستقبال."
+                : $"{_stats.Total} إضبارة مسجّلة — راجع الفلاتر لمتابعة الحالات.";
+    }
+
+    <header class="sv-hero">
+        <div class="sv-hero-copy">
+            <p class="sv-role">متابعة المسؤول · بدون إدخال</p>
+            <h1>لوحة متابعة ملفات المرضى</h1>
+            <p class="sv-lead">@finding</p>
+            <p class="sv-note">عرض وقراءة فقط. التعديل والإغلاق يتمّان من محطات الاستقبال والعيادات والأقسام.</p>
+        </div>
+        <div class="sv-hero-actions">
+            <button type="button" class="sv-btn ghost" disabled="@_busy" @onclick="ReloadAsync">تحديث الآن</button>
+        </div>
+    </header>
+
+    <div class="sv-kpis sv-kpis-6" aria-label="مؤشرات الملفات">
+        <article class="sv-kpi">
+            <span>إجمالي الملفات</span>
+            <strong>@_stats.Total</strong>
+            <small>إضبارة</small>
+        </article>
+        <article class="sv-kpi accent">
+            <span>حجز مسبق</span>
+            <strong>@_stats.Prebooked</strong>
+            <small>دخول</small>
+        </article>
+        <article class="sv-kpi">
+            <span>إسعافي</span>
+            <strong>@_stats.Emergency</strong>
+            <small>طارئ</small>
+        </article>
+        <article class="sv-kpi">
+            <span>حالات خاصة</span>
+            <strong>@_stats.Special</strong>
+            <small>فئة</small>
+        </article>
+        <article class="sv-kpi @(_stats.InDepartment > 0 ? "alert" : null)">
+            <span>قيد المعالجة</span>
+            <strong>@_stats.InDepartment</strong>
+            <small>قسم</small>
+        </article>
+        <article class="sv-kpi">
+            <span>مُعاد للاستقبال</span>
+            <strong>@_stats.Returned</strong>
+            <small>متابعة</small>
+        </article>
+    </div>
+
+    <div class="sv-filters">
+        @foreach (var s in _statusFilters)
+        {
+            <button type="button" class="sv-chip @(_statusLabel == s ? "on" : null)" @onclick="() => SetStatus(s)">@s</button>
+        }
+    </div>
+    <div class="sv-filters">
+        @foreach (var k in _kindFilters)
+        {
+            <button type="button" class="sv-chip @(_kind == k ? "on" : null)" @onclick="() => SetKind(k)">@k</button>
+        }
+    </div>
+
+    <div class="sv-search-row">
+        <input class="sv-search" @bind="_query" @bind:event="oninput" @bind:after="ReloadAsync"
+               placeholder="بحث بالاسم، الرقم الوطني، رقم الإضبارة..." />
+        <span class="sv-refresh">يتحدّث كل 60 ثانية</span>
+    </div>
+
+    <div class="sv-layout">
+        <section class="sv-board harasta-panel">
+            <div class="sv-section-head">
+                <div>
+                    <p class="sv-label">قائمة الملفات</p>
+                    <h2>الأضابير المطابقة</h2>
+                </div>
+                <strong class="sv-queue-n">@_list.Count</strong>
+            </div>
+
+            @if (_loading)
+            {
+                <p class="sv-muted">جاري التحميل...</p>
+            }
+            else if (_list.Count == 0)
+            {
+                <div class="sv-empty compact">
+                    <strong>لا توجد ملفات مطابقة</strong>
+                    <p>غيّر الفلتر أو عبارة البحث.</p>
+                </div>
+            }
+            else
+            {
+                <div class="sv-queue">
+                    @foreach (var item in _list)
+                    {
+                        <button type="button"
+                                class="sv-patient sv-file-row @(_selected?.Id == item.Id ? "on" : null)"
+                                @onclick="() => _selected = item">
+                            <div class="sv-patient-rank">·</div>
+                            <div class="sv-patient-main">
+                                <strong>@item.PatientName</strong>
+                                <span class="mono">@item.CaseNumber · @(item.NationalId ?? "بدون هوية") · @item.EntryType</span>
+                            </div>
+                            <div class="sv-patient-meta">
+                                <em class="sv-status">@PatientCaseStatusLabels.ToArabic(item.Status)</em>
+                                @if (!string.IsNullOrWhiteSpace(item.CurrentClinic ?? item.BookedClinic))
+                                {
+                                    <span>@(item.CurrentClinic ?? item.BookedClinic)</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(item.CurrentDepartment))
+                                {
+                                    <span>@item.CurrentDepartment</span>
+                                }
+                            </div>
+                        </button>
+                    }
+                </div>
+            }
+        </section>
+
+        <aside class="sv-detail harasta-panel">
+            @if (_selected is null)
+            {
+                <div class="sv-empty">
+                    <strong>اختر ملفاً للمتابعة</strong>
+                    <p>ستظهر هنا تفاصيل الإضبارة للقراءة فقط — دون تعديل.</p>
+                </div>
+            }
+            else
+            {
+                <div class="sv-detail-head">
+                    <div>
+                        <p class="sv-label">FILE · @_selected.CaseNumber</p>
+                        <h2>@_selected.PatientName</h2>
+                    </div>
+                    <em class="sv-badge @StatusLevel(_selected.Status)">@PatientCaseStatusLabels.ToArabic(_selected.Status)</em>
+                </div>
+
+                <div class="sv-eval">
+                    <article><span>الدخول</span><strong>@_selected.EntryType</strong></article>
+                    <article><span>نوع الحالة</span><strong>@(_selected.Category == "خاصة" ? $"خاصة — {_selected.SpecialType}" : "عامة")</strong></article>
+                    <article><span>الرقم الوطني</span><strong>@(_selected.NationalId ?? "بدون هوية")</strong></article>
+                    <article><span>العمر</span><strong>@(_selected.Age?.ToString() ?? "—")</strong></article>
+                    <article><span>المحافظة</span><strong>@_selected.Governorate</strong></article>
+                    <article><span>السكن</span><strong>@(_selected.Residence ?? "—")</strong></article>
+                    <article><span>جهة الحجز</span><strong>@(_selected.AdminUnit ?? "—")</strong></article>
+                    <article><span>العيادة</span><strong>@(_selected.CurrentClinic ?? _selected.BookedClinic ?? "—")</strong></article>
+                    @if (!string.IsNullOrWhiteSpace(_selected.CurrentDepartment))
+                    {
+                        <article><span>القسم الحالي</span><strong>@_selected.CurrentDepartment</strong></article>
+                    }
+                    <article><span>فُتحت</span><strong class="mono">@_selected.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</strong></article>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_selected.SpecialNote))
+                {
+                    <p class="sv-muted" style="text-align:right;padding:0.35rem 0">ملاحظة: @_selected.SpecialNote</p>
+                }
+                @if (_selected.CallCount > 0)
+                {
+                    <p class="sv-muted" style="text-align:right;padding:0">
+                        استدعاءات: @_selected.CallCount@(_selected.CalledAt is null ? "" : $" · آخرها {_selected.CalledAt.Value.ToLocalTime():HH:mm}")
+                    </p>
+                }
+
+                <div class="sv-station-hint">
+                    <span>هذه الشاشة للمتابعة فقط — لا إدخال من هنا.</span>
+                </div>
+            }
+        </aside>
+    </div>
+</section>
+
+@code {
+    private static readonly string[] _statusFilters =
+        ["الكل", "في الاستقبال", "في العيادة", "قيد المعالجة", "مُعاد للاستقبال", "مغلق"];
+    private static readonly string[] _kindFilters = ["الكل", "عامة", "خاصة", "إسعافي"];
+
+    private List<PatientCase> _list = [];
+    private PatientCase? _selected;
+    private string _query = string.Empty;
+    private string _statusLabel = "الكل";
+    private string _kind = "الكل";
+    private bool _loading = true;
+    private bool _busy;
+    private (int Total, int Prebooked, int Emergency, int Special, int InDepartment, int Returned) _stats;
+    private System.Threading.Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await ReloadAsync();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+    }
+
+    private async Task SetStatus(string label)
+    {
+        _statusLabel = label;
+        await ReloadAsync();
+    }
+
+    private async Task SetKind(string kind)
+    {
+        _kind = kind;
+        await ReloadAsync();
+    }
+
+    private PatientCaseStatus? StatusFilter => _statusLabel switch
+    {
+        "في الاستقبال" => PatientCaseStatus.AtReception,
+        "في العيادة" => PatientCaseStatus.InClinic,
+        "قيد المعالجة" => PatientCaseStatus.InDepartment,
+        "مُعاد للاستقبال" => PatientCaseStatus.ReturnedToReception,
+        "مغلق" => PatientCaseStatus.Closed,
+        _ => null
+    };
+
+    private async Task ReloadAsync()
+    {
+        _busy = true;
+        _loading = true;
+        try
+        {
+            _stats = await Files.GetStatsAsync(HarastaData.FacilityId);
+            _list = (await Files.SearchAsync(HarastaData.FacilityId, _query, StatusFilter, _kind)).ToList();
+            if (_selected is not null)
+                _selected = _list.FirstOrDefault(x => x.Id == _selected.Id) ?? _list.FirstOrDefault();
+        }
+        finally
+        {
+            _loading = false;
+            _busy = false;
+        }
+    }
+
+    private static string StatusLevel(PatientCaseStatus status) => status switch
+    {
+        PatientCaseStatus.Closed => "ok",
+        PatientCaseStatus.InDepartment => "high",
+        PatientCaseStatus.ReturnedToReception => "mid",
+        PatientCaseStatus.AtReception => "mid",
+        _ => "ok"
+    };
+
+    public void Dispose() => _timer?.Dispose();
+}

@@ -1,0 +1,177 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Hasia
+@using Microsoft.JSInterop
+@inject IHasiaOpsService Ops
+@inject IJSRuntime Js
+
+<section class="hasia-page hasia-cases-layout">
+    <aside class="harasta-panel hasia-archive-side">
+        <p class="eyebrow">ARCHIVE · الأيام المؤرشفة</p>
+        <h1 class="hasia-side-title">@_days.Count يوم · @_cases.Count حالة</h1>
+        <div class="hasia-day-list">
+            @foreach (var d in _days)
+            {
+                var n = _cases.Count(c => c.Day == d);
+                var pct = _max == 0 ? 0 : (int)Math.Round(100.0 * n / _max);
+                <button type="button" class="hasia-day-card @(_day == d ? "on" : null)" @onclick="() => SelectDay(d)">
+                    <div class="hasia-day-card-top">
+                        <strong>@Weekday(d)</strong>
+                        <span class="hasia-badge">@n حالة</span>
+                    </div>
+                    <div class="hasia-day-card-sub">@FullDate(d)</div>
+                    <div class="hasia-day-bar"><i style="width:@pct%"></i></div>
+                </button>
+            }
+            @if (_days.Count == 0)
+            {
+                <div class="hasia-empty">لا يوجد أرشيف بعد</div>
+            }
+        </div>
+    </aside>
+
+    <div class="harasta-stack">
+        <div class="harasta-panel">
+            <header class="hasia-page-head compact">
+                <div class="hasia-page-head-icon sm" aria-hidden="true">▣</div>
+                <div class="hasia-page-head-text">
+                    <p class="eyebrow">DAILY REPORT · تقرير اليوم</p>
+                    <h1>@(_day is null ? "—" : FullDate(_day.Value))</h1>
+                </div>
+                <button type="button" class="hasia-act hasia-act-done" style="margin-inline-start:auto" disabled="@(_day is null || !DayCases.Any())" @onclick="PrintOfficialReport">إصدار تقرير رسمي</button>
+            </header>
+            <div class="hasia-kpi-row">
+                <div class="hasia-kpi accent-green"><strong class="mono" lang="en">@DayCases.Count()</strong><span>حالات منجزة</span></div>
+                <div class="hasia-kpi accent-cyan"><strong class="mono" lang="en">@DayCases.Count(c => HasiaData.FindService(c.AtServiceId)?.Zone != "hospital")</strong><span>ضمن النقطة</span></div>
+                <div class="hasia-kpi accent-blue"><strong class="mono" lang="en">@DayCases.Count(c => HasiaData.FindService(c.AtServiceId)?.Zone == "hospital")</strong><span>حُوّلت للمشفى</span></div>
+            </div>
+            <div class="hasia-search">
+                <input class="input" placeholder="بحث برقم النزيل أو الحالة أو الشكاية" @bind="_q" @bind:event="oninput" />
+            </div>
+        </div>
+
+        <div class="hasia-card-grid">
+            @foreach (var c in Filtered)
+            {
+                var s = HasiaData.FindService(c.AtServiceId);
+                var last = c.Steps.OrderBy(x => x.SortOrder).LastOrDefault();
+                <button type="button" class="hasia-result-card" @onclick="() => _sel = c">
+                    <div class="hasia-result-top">
+                        <strong class="mono">@c.CaseCode · #@c.InmateNo</strong>
+                        <span class="mono hasia-time">@c.OpenedTime</span>
+                    </div>
+                    <div class="hasia-result-title">@c.Complaint</div>
+                    @if (last?.Diagnosis is not null)
+                    {
+                        <div class="hasia-result-meta">تشخيص: @last.Diagnosis</div>
+                    }
+                    <div class="hasia-result-zone @(s?.Zone == "hospital" ? "hosp" : "point")">
+                        @(s is null ? c.AtServiceId : $"{HasiaData.ZoneLabel(s.Zone)} · {s.Name}")
+                    </div>
+                </button>
+            }
+            @if (!Filtered.Any() && _day is not null)
+            {
+                <div class="hasia-empty wide">لا توجد حالات مطابقة</div>
+            }
+        </div>
+    </div>
+</section>
+
+@if (_sel is not null)
+{
+    <div class="hasia-modal-backdrop" @onclick="() => _sel = null">
+        <div class="hasia-modal" role="dialog" aria-modal="true" aria-labelledby="hasia-arch-title" @onclick:stopPropagation="true">
+            <div class="hasia-modal-head">
+                <div>
+                    <p class="eyebrow" style="color:#9fd8cf;margin:0">ARCHIVED · حالة مؤرشفة</p>
+                    <h2 id="hasia-arch-title" class="mono" style="color:#fff;margin:0.35rem 0 0;font-size:1.45rem" lang="en">@_sel.CaseCode · #@_sel.InmateNo</h2>
+                    <div class="hasia-modal-meta">
+                        <span class="hasia-modal-chip mono" lang="en">@_sel.OpenedTime</span>
+                        <span class="hasia-modal-chip">الفارز: @_sel.Triager</span>
+                        @if (_day is not null)
+                        {
+                            <span class="hasia-modal-chip">@FullDate(_day.Value)</span>
+                        }
+                    </div>
+                </div>
+                <button type="button" class="hasia-icon-btn" aria-label="إغلاق" @onclick="() => _sel = null">✕</button>
+            </div>
+            <div class="hasia-modal-body">
+                <div class="hasia-complaint">@_sel.Complaint</div>
+                <div class="hasia-modal-path-title">مسار الحالة · @_sel.Steps.Count مرحلة</div>
+                @foreach (var st in _sel.Steps.OrderBy(s => s.SortOrder))
+                {
+                    var z = HasiaData.FindService(st.AtServiceId);
+                    <div class="hasia-step">
+                        <div class="hasia-load-row">
+                            <strong>@(z?.Name ?? st.AtServiceId)</strong>
+                            <span class="mono muted" lang="en">@st.Time</span>
+                        </div>
+                        <div class="muted">@st.By</div>
+                        @if (st.Diagnosis is not null) { <div><span class="muted">تشخيص:</span> @st.Diagnosis</div> }
+                        @if (st.Procedures is not null) { <div><span class="muted">إجراء:</span> @st.Procedures</div> }
+                        @if (st.Meds is not null) { <div class="hasia-med-line">وصفة: @st.Meds</div> }
+                    </div>
+                }
+                @if (!_sel.Steps.Any())
+                {
+                    <div class="hasia-empty">لا خطوات مسجّلة لهذه الحالة</div>
+                }
+                <p class="hasia-archived-banner">منجزة · مؤرشفة — للقراءة فقط</p>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<PrisonCase> _cases = [];
+    private List<DateOnly> _days = [];
+    private DateOnly? _day;
+    private string _q = "";
+    private PrisonCase? _sel;
+    private int _max = 1;
+    private static readonly System.Globalization.CultureInfo Ar = ArLatnCulture.Instance;
+
+    private IEnumerable<PrisonCase> DayCases =>
+        _day is null ? [] : _cases.Where(c => c.Day == _day);
+
+    private IEnumerable<PrisonCase> Filtered =>
+        DayCases.Where(c => string.IsNullOrWhiteSpace(_q)
+            || c.InmateNo.Contains(_q, StringComparison.OrdinalIgnoreCase)
+            || c.CaseCode.Contains(_q, StringComparison.OrdinalIgnoreCase)
+            || c.Complaint.Contains(_q, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(c => c.OpenedTime);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cases = (await Ops.ListCasesAsync(archiveOnly: true)).ToList();
+        _days = _cases.Select(c => c.Day).Distinct().OrderByDescending(d => d).ToList();
+        _max = Math.Max(1, _days.Count == 0 ? 1 : _days.Max(d => _cases.Count(c => c.Day == d)));
+        _day = _days.Count > 0 ? _days[0] : null;
+    }
+
+    private void SelectDay(DateOnly d)
+    {
+        _day = d;
+        _sel = null;
+    }
+
+    private static string Weekday(DateOnly d) =>
+        ArLatnCulture.ToLatnDigits(d.ToDateTime(TimeOnly.MinValue).ToString("dddd", Ar));
+
+    private static string FullDate(DateOnly d) =>
+        ArLatnCulture.Format(d.ToDateTime(TimeOnly.MinValue), "d MMMM yyyy");
+
+    private async Task PrintOfficialReport()
+    {
+        if (_day is null) return;
+        var html = HasiaArchiveReport.BuildDailyHtml(_day.Value, DayCases.ToList());
+        var payload = System.Text.Json.JsonSerializer.Serialize(html);
+        var script = string.Concat(
+            "const w=window.open('','_blank','width=1020,height=1280');",
+            "if(!w){alert('\\u0627\\u0633\\u0645\\u062d \\u0628\\u0627\\u0644\\u0646\\u0648\\u0627\\u0641\\u0630 \\u0627\\u0644\\u0645\\u0646\\u0628\\u062b\\u0642\\u0629');}",
+            "else{w.document.open();w.document.write(", payload, ");w.document.close();w.focus();}");
+        await Js.InvokeVoidAsync("eval", script);
+    }
+}

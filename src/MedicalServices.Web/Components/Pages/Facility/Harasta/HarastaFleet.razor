@@ -1,0 +1,257 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IFleetService Fleet
+@inject AuthenticationStateProvider AuthState
+
+<section class="harasta-stack">
+    <div class="ops-grid">
+        <article class="ops-card"><span>إجمالي المركبات</span><strong>@_list.Count</strong><em>أسطول</em></article>
+        <article class="ops-card"><span>جاهزة</span><strong>@Count(FleetVehicleStatus.Ready)</strong><em>متاحة</em></article>
+        <article class="ops-card"><span>في مهمة</span><strong>@Count(FleetVehicleStatus.OnMission)</strong><em>ميدان</em></article>
+        <article class="ops-card"><span>صيانة</span><strong>@Count(FleetVehicleStatus.Maintenance)</strong><em>ورشة</em></article>
+    </div>
+
+    <div class="harasta-panel">
+        <div class="queue-head">
+            <div>
+                <p class="eyebrow">FLEET</p>
+                <h1>أسطول المشفى</h1>
+            </div>
+            <div class="chip-row" style="margin:0">
+                @foreach (var f in _filters)
+                {
+                    <button type="button" class="chip @(_filter == f ? "on" : null)" @onclick="() => _filter = f">@f</button>
+                }
+            </div>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <div class="@(_error ? "login-error" : "save-ok")" style="margin-bottom:0.85rem">@_message</div>
+        }
+
+        @if (_loading)
+        {
+            <p class="muted">جاري التحميل...</p>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <p class="muted" style="text-align:center;padding:1.5rem 0">لا توجد مركبات — أضف مركبة أدناه</p>
+        }
+        else
+        {
+            <div class="fleet-grid">
+                @foreach (var v in Filtered)
+                {
+                    <article class="fleet-card">
+                        <div class="fleet-card-head">
+                            <div>
+                                <strong>@v.VehicleType</strong>
+                                <span class="muted mono">@v.Code · لوحة @v.Plate</span>
+                            </div>
+                            <em class="status-pill">@FleetVehicleStatusLabels.ToArabic(v.Status)</em>
+                        </div>
+                        <div class="fleet-meta">
+                            <div><span>السائق</span><b>@(v.DriverName ?? "—")</b></div>
+                            <div><span>العداد</span><b>@v.OdometerKm.ToString("N0") كم</b></div>
+                            <div><span>آخر صيانة</span><b>@(v.LastServiceDate?.ToString("yyyy-MM-dd") ?? "—")</b></div>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(v.Equipment))
+                        {
+                            <p class="muted" style="margin:0.5rem 0 0;font-size:0.85rem">@v.Equipment</p>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(v.MissionNote))
+                        {
+                            <p style="margin:0.35rem 0 0;font-size:0.85rem;color:#3a7ba6"><b>مهمة:</b> @v.MissionNote</p>
+                        }
+                        @if (_missionVehicleId == v.Id)
+                        {
+                            <div class="field" style="margin-top:0.65rem">
+                                <label>وصف المهمة</label>
+                                <input class="input" @bind="_missionNote" placeholder="مثال: نقل مريض إلى المواساة" />
+                            </div>
+                            <div class="booking-arrive-actions" style="margin-top:0.5rem">
+                                <button type="button" class="btn-enter compact" disabled="@_busyIds.Contains(v.Id)" @onclick="() => ConfirmMissionAsync(v)">تأكيد الإرسال</button>
+                                <button type="button" class="chip" @onclick="CancelMissionForm">إلغاء</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="booking-arrive-actions" style="margin-top:0.75rem">
+                                @if (v.Status != FleetVehicleStatus.OnMission)
+                                {
+                                    <button type="button" class="btn-enter compact" disabled="@(v.Status == FleetVehicleStatus.Maintenance || _busyIds.Contains(v.Id))" @onclick="() => BeginMissionForm(v)">إرسال في مهمة</button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="btn-enter compact" disabled="@_busyIds.Contains(v.Id)" @onclick="() => SetStatusAsync(v, FleetVehicleStatus.Ready, null)">عودة من المهمة</button>
+                                }
+                                @if (v.Status != FleetVehicleStatus.Maintenance)
+                                {
+                                    <button type="button" class="chip" disabled="@_busyIds.Contains(v.Id)" @onclick="() => SetStatusAsync(v, FleetVehicleStatus.Maintenance, null)">تحويل للصيانة</button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="chip" disabled="@_busyIds.Contains(v.Id)" @onclick="() => SetStatusAsync(v, FleetVehicleStatus.Ready, null)">انتهت الصيانة</button>
+                                }
+                            </div>
+                        }
+                    </article>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="harasta-panel">
+        <p class="eyebrow">ADD VEHICLE</p>
+        <h2>إضافة مركبة</h2>
+        <div class="admissions-form" style="margin-top:0.85rem">
+            <div class="field"><label>الرمز</label><input class="input" @bind="_code" placeholder="AMB-1" /></div>
+            <div class="field"><label>اللوحة</label><input class="input" @bind="_plate" placeholder="512-831" /></div>
+            <div class="field" style="grid-column:1 / -1">
+                <label>النوع</label>
+                <select class="input" @bind="_type">
+                    @foreach (var t in _types)
+                    {
+                        <option value="@t">@t</option>
+                    }
+                </select>
+            </div>
+            <div class="field"><label>السائق</label><input class="input" @bind="_driver" /></div>
+            <div class="field"><label>العداد (كم)</label><input class="input" type="number" min="0" @bind="_km" /></div>
+            <div class="field" style="grid-column:1 / -1"><label>التجهيز</label><input class="input" @bind="_equip" /></div>
+        </div>
+        <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@_saving" @onclick="AddAsync">
+            @(_saving ? "جاري الحفظ..." : "حفظ المركبة")
+        </button>
+    </div>
+</section>
+
+@code {
+    private static readonly string[] _filters = ["الكل", "جاهزة", "في مهمة", "صيانة"];
+    private static readonly string[] _types =
+    [
+        "سيارة إسعاف مجهزة",
+        "سيارة خدمة (نقل كوادر)",
+        "سيارة نقل مستلزمات"
+    ];
+
+    private List<FleetVehicle> _list = [];
+    private string _filter = "الكل";
+    private bool _loading = true;
+    private bool _saving;
+    private bool _error;
+    private string? _message;
+    private readonly HashSet<Guid> _busyIds = [];
+
+    private string _code = string.Empty;
+    private string _plate = string.Empty;
+    private string _type = _types[0];
+    private string _driver = string.Empty;
+    private string _equip = string.Empty;
+    private int _km;
+    private Guid? _missionVehicleId;
+    private string _missionNote = string.Empty;
+
+    private IReadOnlyList<FleetVehicle> Filtered => _filter switch
+    {
+        "جاهزة" => _list.Where(x => x.Status == FleetVehicleStatus.Ready).ToList(),
+        "في مهمة" => _list.Where(x => x.Status == FleetVehicleStatus.OnMission).ToList(),
+        "صيانة" => _list.Where(x => x.Status == FleetVehicleStatus.Maintenance).ToList(),
+        _ => _list
+    };
+
+    private int Count(FleetVehicleStatus s) => _list.Count(x => x.Status == s);
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _list = (await Fleet.ListAsync(HarastaData.FacilityId)).ToList();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task<string> UserAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        return state.User.Identity?.Name ?? "unknown";
+    }
+
+    private async Task AddAsync()
+    {
+        _saving = true;
+        _message = null;
+        try
+        {
+            await Fleet.AddAsync(
+                HarastaData.FacilityId,
+                new AddFleetVehicleRequest(_code, _plate, _type, _equip, _driver, _km, null),
+                await UserAsync());
+            _error = false;
+            _message = "تم إضافة المركبة.";
+            _code = _plate = _driver = _equip = string.Empty;
+            _km = 0;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void BeginMissionForm(FleetVehicle v)
+    {
+        _missionVehicleId = v.Id;
+        _missionNote = string.Empty;
+        _message = null;
+    }
+
+    private void CancelMissionForm()
+    {
+        _missionVehicleId = null;
+        _missionNote = string.Empty;
+    }
+
+    private async Task ConfirmMissionAsync(FleetVehicle v)
+    {
+        await SetStatusAsync(v, FleetVehicleStatus.OnMission, _missionNote);
+        if (!_error)
+            CancelMissionForm();
+    }
+
+    private async Task SetStatusAsync(FleetVehicle v, FleetVehicleStatus status, string? mission)
+    {
+        _busyIds.Add(v.Id);
+        _message = null;
+        try
+        {
+            await Fleet.SetStatusAsync(HarastaData.FacilityId, v.Id, status, mission, await UserAsync());
+            _error = false;
+            _message = $"تم تحديث {v.Code} → {FleetVehicleStatusLabels.ToArabic(status)}.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busyIds.Remove(v.Id);
+        }
+    }
+}

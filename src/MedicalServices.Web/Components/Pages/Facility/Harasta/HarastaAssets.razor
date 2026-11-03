@@ -1,0 +1,239 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IAssetService AssetSvc
+@inject AuthenticationStateProvider AuthState
+
+<section class="harasta-stack">
+    <div class="ops-grid">
+        <article class="ops-card"><span>إجمالي الأجهزة</span><strong>@TotalCount</strong><em>وحدة</em></article>
+        <article class="ops-card"><span>تعمل</span><strong>@CountUnits(FacilityAssetStatus.Working)</strong><em>جاهز</em></article>
+        <article class="ops-card"><span>تحتاج صيانة</span><strong>@CountUnits(FacilityAssetStatus.NeedsMaintenance)</strong><em>متابعة</em></article>
+        <article class="ops-card"><span>معطّلة</span><strong>@CountUnits(FacilityAssetStatus.OutOfService)</strong><em>إيقاف</em></article>
+    </div>
+
+    <div class="harasta-panel">
+        <div class="queue-head">
+            <div>
+                <p class="eyebrow">ASSETS</p>
+                <h1>الأصول والتجهيزات الطبية</h1>
+            </div>
+            <div class="chip-row" style="margin:0">
+                @foreach (var f in _statusFilters)
+                {
+                    <button type="button" class="chip @(_statusFilter == f ? "on" : null)" @onclick="() => _statusFilter = f">@f</button>
+                }
+            </div>
+        </div>
+
+        <div class="chip-row" style="margin-bottom:0.85rem">
+            <button type="button" class="chip @(_deptFilter == "الكل" ? "on" : null)" @onclick='() => _deptFilter = "الكل"'>الكل</button>
+            @foreach (var d in DepartmentsInUse)
+            {
+                <button type="button" class="chip @(_deptFilter == d ? "on" : null)" @onclick="() => _deptFilter = d">@d</button>
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <div class="@(_error ? "login-error" : "save-ok")" style="margin-bottom:0.85rem">@_message</div>
+        }
+
+        @if (_loading)
+        {
+            <p class="muted">جاري التحميل...</p>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <p class="muted" style="text-align:center;padding:1.5rem 0">لا توجد أصول — أضف جهازاً أدناه</p>
+        }
+        else
+        {
+            <div class="asset-grid">
+                @foreach (var a in Filtered)
+                {
+                    <article class="asset-card">
+                        <div class="asset-card-head">
+                            <strong class="asset-count">@a.Count</strong>
+                            <div class="asset-card-main">
+                                <strong>@a.Name</strong>
+                                <span class="muted mono">@a.Code · @a.Department</span>
+                            </div>
+                            <button type="button"
+                                    class="status-pill asset-status @StatusClass(a.Status)"
+                                    disabled="@_busyIds.Contains(a.Id)"
+                                    title="اضغط لتغيير الحالة"
+                                    @onclick="() => CycleAsync(a)">
+                                @FacilityAssetStatusLabels.ToArabic(a.Status)
+                            </button>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(a.Note))
+                        {
+                            <p class="muted" style="margin:0.45rem 0 0;font-size:0.85rem">@a.Note</p>
+                        }
+                    </article>
+                }
+            </div>
+            <p class="muted" style="margin-top:0.75rem;font-size:0.78rem">اضغط على الحالة للتنقل: يعمل → يحتاج صيانة → معطل</p>
+        }
+    </div>
+
+    <div class="harasta-panel">
+        <p class="eyebrow">ADD ASSET</p>
+        <h2>إضافة أصل / جهاز</h2>
+        <div class="admissions-form" style="margin-top:0.85rem">
+            <div class="field">
+                <label>الرمز</label>
+                <input class="input" @bind="_code" placeholder="A01" />
+            </div>
+            <div class="field">
+                <label>العدد</label>
+                <input class="input" type="number" min="1" @bind="_count" />
+            </div>
+            <div class="field" style="grid-column:1 / -1">
+                <label>الاسم</label>
+                <input class="input" @bind="_name" placeholder="مثال: جهاز طبقي محوري CT" />
+            </div>
+            <div class="field">
+                <label>القسم</label>
+                <select class="input" @bind="_dept">
+                    @foreach (var d in HarastaData.AssetDepartments)
+                    {
+                        <option value="@d">@d</option>
+                    }
+                </select>
+            </div>
+            <div class="field">
+                <label>ملاحظة</label>
+                <input class="input" @bind="_note" placeholder="اختياري" />
+            </div>
+        </div>
+        <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@_saving" @onclick="AddAsync">
+            @(_saving ? "جاري الحفظ..." : "حفظ الأصل")
+        </button>
+    </div>
+</section>
+
+@code {
+    private static readonly string[] _statusFilters = ["الكل", "يعمل", "يحتاج صيانة", "معطل"];
+
+    private List<FacilityAsset> _list = [];
+    private string _statusFilter = "الكل";
+    private string _deptFilter = "الكل";
+    private bool _loading = true;
+    private bool _saving;
+    private bool _error;
+    private string? _message;
+    private readonly HashSet<Guid> _busyIds = [];
+
+    private string _code = string.Empty;
+    private string _name = string.Empty;
+    private string _dept = HarastaData.AssetDepartments[0];
+    private string _note = string.Empty;
+    private int _count = 1;
+
+    private int TotalCount => _list.Sum(x => x.Count);
+    private int CountUnits(FacilityAssetStatus s) => _list.Where(x => x.Status == s).Sum(x => x.Count);
+
+    private IEnumerable<string> DepartmentsInUse =>
+        _list.Select(x => x.Department).Distinct().OrderBy(x => x);
+
+    private IReadOnlyList<FacilityAsset> Filtered
+    {
+        get
+        {
+            IEnumerable<FacilityAsset> q = _list;
+            if (_statusFilter != "الكل")
+            {
+                var status = _statusFilter switch
+                {
+                    "يحتاج صيانة" => FacilityAssetStatus.NeedsMaintenance,
+                    "معطل" => FacilityAssetStatus.OutOfService,
+                    _ => FacilityAssetStatus.Working
+                };
+                q = q.Where(x => x.Status == status);
+            }
+            if (_deptFilter != "الكل")
+                q = q.Where(x => x.Department == _deptFilter);
+            return q.ToList();
+        }
+    }
+
+    private static string StatusClass(FacilityAssetStatus s) => s switch
+    {
+        FacilityAssetStatus.Working => "ok",
+        FacilityAssetStatus.NeedsMaintenance => "mid",
+        _ => "bad"
+    };
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _list = (await AssetSvc.ListAsync(HarastaData.FacilityId)).ToList();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task<string> UserAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        return state.User.Identity?.Name ?? "unknown";
+    }
+
+    private async Task AddAsync()
+    {
+        _saving = true;
+        _message = null;
+        try
+        {
+            await AssetSvc.AddAsync(
+                HarastaData.FacilityId,
+                new AddFacilityAssetRequest(_code, _name, _dept, _count, _note),
+                await UserAsync());
+            _error = false;
+            _message = "تم إضافة الأصل.";
+            _code = _name = _note = string.Empty;
+            _count = 1;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CycleAsync(FacilityAsset a)
+    {
+        _busyIds.Add(a.Id);
+        _message = null;
+        try
+        {
+            var row = await AssetSvc.CycleStatusAsync(HarastaData.FacilityId, a.Id, await UserAsync());
+            _error = false;
+            _message = $"{row.Code}: {FacilityAssetStatusLabels.ToArabic(row.Status)}";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busyIds.Remove(a.Id);
+        }
+    }
+}

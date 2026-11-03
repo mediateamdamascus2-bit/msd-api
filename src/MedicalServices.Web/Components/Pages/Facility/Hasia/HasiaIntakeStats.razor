@@ -1,0 +1,58 @@
+@using System.Globalization
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="harasta-stack hasia-page">
+    <header class="hasia-page-head harasta-panel">
+        <div class="hasia-page-head-icon" aria-hidden="true">▤</div>
+        <div class="hasia-page-head-text">
+            <p class="eyebrow">STATS · INTAKE</p>
+            <h1>إحصائيات الاستقبال</h1>
+            <p class="lead">متابعة المسؤول فقط — تعبئة الاستمارة من محطة الاستقبال المستقلة.</p>
+        </div>
+        <a class="btn-enter compact" href="/stations/hasia/intake" data-enhance-nav="false">فتح محطة الاستقبال</a>
+    </header>
+
+    <div class="hasia-kpi-row">
+        <div class="hasia-kpi"><strong class="mono" lang="en">@N(_all.Count)</strong><span>إجمالي الأضابير</span></div>
+        <div class="hasia-kpi accent-cyan"><strong class="mono" lang="en">@N(_today)</strong><span>استقبال اليوم</span></div>
+        <div class="hasia-kpi"><strong class="mono" lang="en">@N(_male)</strong><span>ذكور</span></div>
+        <div class="hasia-kpi accent-amber"><strong class="mono" lang="en">@N(_female)</strong><span>إناث</span></div>
+    </div>
+
+    <div class="harasta-panel">
+        <h2>آخر الاستقبالات</h2>
+        @if (_all.Count == 0)
+        {
+            <p class="muted">لا توجد أضابير</p>
+        }
+        else
+        {
+            @foreach (var i in _all.Take(12))
+            {
+                <div class="hasia-load-row">
+                    <strong class="mono" style="color:@(i.Sex == "أنثى" ? "#d8467f" : null)">#@i.InmateNo</strong>
+                    <span>ملف @i.FileNo · @i.Place</span>
+                    <em class="mono muted" lang="en">@i.EntryDate</em>
+                </div>
+            }
+        }
+    </div>
+</section>
+
+@code {
+    private List<PrisonInmate> _all = [];
+    private int _today, _male, _female;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _all = (await Ops.ListInmatesAsync()).OrderByDescending(x => x.EntryDate).ThenByDescending(x => x.InmateNo).ToList();
+        var today = DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        _today = _all.Count(i => i.EntryDate == today);
+        _female = _all.Count(i => i.Sex == "أنثى");
+        _male = _all.Count - _female;
+    }
+
+    private static string N(int v) => v.ToString(CultureInfo.InvariantCulture);
+}

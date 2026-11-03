@@ -1,0 +1,115 @@
+@page "/admin/facilities"
+@layout AdminLayout
+@attribute [Authorize(Roles = AppRoles.Admin)]
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@inject NavigationManager Navigation
+@inject IFacilityCatalog Facilities
+
+<PageTitle>المواقع والواجهات</PageTitle>
+
+<section class="admin-block">
+    <div class="admin-block-head">
+        <p class="eyebrow">FACILITIES</p>
+        <h1>المواقع والواجهات</h1>
+        <p class="lead">كل موقع له واجهته الخاصة. الإدارة تستطيع فتح أي واجهة من هنا.</p>
+    </div>
+
+    <div class="facilities-toolbar">
+        <input class="input search-input" placeholder="بحث باسم الموقع أو المحافظة..." @bind="_query" @bind:event="oninput" />
+        <select class="input filter-select" @bind="_typeKey">
+            <option value="">كل الأنواع</option>
+            @foreach (FacilityType type in Enum.GetValues<FacilityType>())
+            {
+                <option value="@((int)type)">@FacilityTypeLabels.ToArabic(type)</option>
+            }
+        </select>
+    </div>
+
+    <div class="facilities-table-wrap">
+        <table class="facilities-table">
+            <thead>
+                <tr>
+                    <th>الموقع</th>
+                    <th>النوع</th>
+                    <th>المحافظة</th>
+                    <th>الحالة</th>
+                    <th>المسار</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var facility in Filtered)
+                {
+                    <tr class="@(facility.IsActive ? null : "row-inactive")">
+                        <td><strong>@facility.NameAr</strong></td>
+                        <td>@FacilityTypeLabels.ToArabic(facility.Type)</td>
+                        <td>@facility.ProvinceAr</td>
+                        <td>
+                            @if (facility.IsActive)
+                            {
+                                <span class="status-badge ok">نشط</span>
+                            }
+                            else
+                            {
+                                <span class="status-badge">متوقف</span>
+                            }
+                        </td>
+                        <td><code dir="ltr">/f/@facility.Id</code></td>
+                        <td class="actions-cell">
+                            <button type="button" class="btn-enter compact" disabled="@(!facility.IsActive)" @onclick="() => Open(facility.Id)">
+                                دخول الواجهة
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (!Filtered.Any())
+    {
+        <p class="muted empty-note">لا توجد مواقع مطابقة للبحث.</p>
+    }
+</section>
+
+@code {
+    private string _query = string.Empty;
+    private string _typeKey = string.Empty;
+    private IReadOnlyList<Facility> _all = [];
+
+    private IEnumerable<Facility> Filtered
+    {
+        get
+        {
+            IEnumerable<Facility> q = _all;
+
+            if (!string.IsNullOrWhiteSpace(_query))
+            {
+                q = q.Where(f =>
+                    f.NameAr.Contains(_query, StringComparison.OrdinalIgnoreCase)
+                    || f.ProvinceAr.Contains(_query, StringComparison.OrdinalIgnoreCase)
+                    || f.Id.Contains(_query, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (int.TryParse(_typeKey, out var typeValue)
+                && Enum.IsDefined(typeof(FacilityType), typeValue))
+            {
+                var type = (FacilityType)typeValue;
+                q = q.Where(f => f.Type == type);
+            }
+
+            return q;
+        }
+    }
+
+    protected override async Task OnInitializedAsync() =>
+        _all = await Facilities.GetAllAsync();
+
+    private void Open(string facilityId) =>
+        Navigation.NavigateTo(
+            string.Equals(facilityId, "harasta", StringComparison.OrdinalIgnoreCase)
+                ? "/f/harasta"
+                : $"/f/{facilityId}");
+}

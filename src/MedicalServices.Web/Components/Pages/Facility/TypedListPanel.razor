@@ -1,0 +1,24 @@
+<section class="harasta-stack">
+    <div class="harasta-panel">
+        <p class="eyebrow">DETAILS</p>
+        <h1>@Title</h1>
+        <p class="lead">@Lead</p>
+    </div>
+    <div class="unit-list">
+        @foreach (var item in Items)
+        {
+            <article class="unit-row">
+                <div>
+                    <strong>@item.Name</strong>
+                    <p>@item.Detail</p>
+                </div>
+            </article>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Lead { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public IReadOnlyList<(string Name, string Detail)> Items { get; set; } = [];
+}

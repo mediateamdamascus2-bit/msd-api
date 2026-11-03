@@ -1,0 +1,77 @@
+<div class="msd-select @(_open ? "is-open" : null) @(Disabled ? "is-disabled" : null) @Class">
+    @if (_open)
+    {
+        <button type="button" class="msd-select-backdrop" aria-label="إغلاق" @onclick="Close"></button>
+    }
+    <button type="button"
+            class="msd-select-trigger input"
+            disabled="@Disabled"
+            aria-haspopup="listbox"
+            aria-expanded="@_open"
+            @onclick="Toggle">
+        <span class="msd-select-value @(string.IsNullOrEmpty(Value) ? "is-placeholder" : null)" dir="@(NeedsLtr(CurrentLabel) ? "ltr" : null)">@CurrentLabel</span>
+        <span class="msd-select-chevron" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+        </span>
+    </button>
+    @if (_open)
+    {
+        <ul class="msd-select-menu" role="listbox">
+            @foreach (var o in Options)
+            {
+                var active = string.Equals(o.Value, Value, StringComparison.Ordinal);
+                <li role="option" aria-selected="@active">
+                    <button type="button"
+                            class="msd-select-option @(active ? "is-active" : null) @(o.Disabled ? "is-disabled" : null)"
+                            disabled="@o.Disabled"
+                            @onclick="() => PickAsync(o.Value)">
+                        <span class="msd-select-label" dir="@(NeedsLtr(o.Label) ? "ltr" : null)">@o.Label</span>
+                        @if (active)
+                        {
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M5 12l5 5 9-10" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                        }
+                    </button>
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    public sealed record Opt(string Value, string Label, bool Disabled = false);
+
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public IReadOnlyList<Opt> Options { get; set; } = [];
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "—";
+
+    private bool _open;
+
+    private string CurrentLabel =>
+        Options.FirstOrDefault(o => string.Equals(o.Value, Value, StringComparison.Ordinal))?.Label
+        ?? (string.IsNullOrEmpty(Value) ? Placeholder : Value!);
+
+    private static bool NeedsLtr(string text) =>
+        text.Any(ch => char.IsAsciiLetterOrDigit(ch) || ch is '+' or '-' or '#' or '%');
+
+    private void Toggle()
+    {
+        if (!Disabled) _open = !_open;
+    }
+
+    private void Close() => _open = false;
+
+    private async Task PickAsync(string value)
+    {
+        if (Disabled) return;
+        _open = false;
+        if (!string.Equals(Value, value, StringComparison.Ordinal))
+            await ValueChanged.InvokeAsync(value);
+    }
+}

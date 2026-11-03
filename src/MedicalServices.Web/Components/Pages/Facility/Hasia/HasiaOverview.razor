@@ -1,0 +1,196 @@
+@using System.Globalization
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="harasta-stack hasia-page">
+    <header class="hasia-page-head harasta-panel">
+        <div class="hasia-page-head-icon" aria-hidden="true">⌂</div>
+        <div class="hasia-page-head-text">
+            <p class="eyebrow">HOME · COMMAND</p>
+            <h1>صباح الخير</h1>
+            <p class="lead">ملخص المنظومة الطبية في سجن حسيا · @ArLatnCulture.Format(DateTime.Now, "dddd d MMMM")</p>
+        </div>
+    </header>
+
+    <div class="harasta-panel hasia-toolbar-panel">
+        <div class="hasia-seg">
+            <button type="button" class="@(_period == "day" ? "on" : null)" @onclick='() => SetPeriod("day")'>اليوم</button>
+            <button type="button" class="@(_period == "month" ? "on" : null)" @onclick='() => SetPeriod("month")'>الشهر</button>
+            <button type="button" class="@(_period == "date" ? "on" : null)" @onclick='() => SetPeriod("date")'>يوم محدد</button>
+        </div>
+        @if (_period == "month")
+        {
+            <NiceMonthPicker Value="_month" ValueChanged="OnMonthValueChanged" Max="@DateTime.Now.ToString("yyyy-MM")" />
+        }
+        @if (_period == "date")
+        {
+            <NiceDatePicker Value="@_pick.ToString("yyyy-MM-dd")" ValueChanged="OnPickValueChanged" Max="@DateTime.Today.ToString("yyyy-MM-dd")" AllowClear="false" CssClass="hasia-date-input hasia-period-pick" />
+        }
+    </div>
+
+    <div class="hasia-kpi-row">
+        <a class="hasia-kpi" href="/f/hasia/cases"><strong class="mono" lang="en">@N(_filtered.Count)</strong><span>إجمالي الحالات</span></a>
+        <a class="hasia-kpi accent-cyan" href="/f/hasia/cases"><strong class="mono" lang="en">@N(_filtered.Count(c => c.Status == "جارية"))</strong><span>حالات جارية</span></a>
+        <a class="hasia-kpi accent-amber" href="/f/hasia/cases"><strong class="mono" lang="en">@N(_filtered.Count(c => c.Status == "معلّقة"))</strong><span>حالات معلّقة</span></a>
+        <a class="hasia-kpi accent-green" href="/f/hasia/archive"><strong class="mono" lang="en">@N(_filtered.Count(c => c.Status == "منجزة"))</strong><span>حالات منجزة</span></a>
+    </div>
+
+    <div class="hasia-quick-row">
+        <a class="hasia-quick" href="/f/hasia/intake"><strong>استقبال نزيل</strong><span>إحصائيات الاستقبال</span></a>
+        <a class="hasia-quick" href="/f/hasia/triage"><strong>الفرز</strong><span>إحصائيات الفرز</span></a>
+        <a class="hasia-quick" href="/f/hasia/cases"><strong>الحالات</strong><span>إحصائيات الحالات</span></a>
+        <a class="hasia-quick" href="/f/hasia/ph-internal"><strong>الصيدلية</strong><span>إحصائيات الصيدلية</span></a>
+        <a class="hasia-quick" href="/f/hasia/fleet"><strong>الأسطول</strong><span>متابعة السيارات</span></a>
+        <a class="hasia-quick" href="/f/hasia/inmates"><strong>سجل النزلاء</strong><span>@_inmateCount نزيل</span></a>
+    </div>
+
+    <div class="hasia-dash-grid">
+        <div class="harasta-panel hasia-dash-load">
+            <div class="hasia-section-title">
+                <h2>أين المرضى الآن؟</h2>
+                <span class="hasia-soft-tag mono" lang="en">@_load.Values.Sum() نشط</span>
+            </div>
+            <div class="hasia-load-zones">
+                @foreach (var zone in new[] { "point", "hospital" })
+                {
+                    <div class="hasia-load-zone">
+                        <p class="hasia-zone-label @(zone == "point" ? "point" : "hosp")">@HasiaData.ZoneLabel(zone)</p>
+                        <div class="hasia-load-cards">
+                            @foreach (var s in HasiaData.Services.Where(x => x.Zone == zone && !x.Id.EndsWith("-ph")))
+                            {
+                                var n = _load.GetValueOrDefault(s.Id);
+                                <div class="hasia-load-card @(n > 0 ? "live" : null)">
+                                    <span>@s.Name</span>
+                                    <strong class="mono" lang="en">@N(n)</strong>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="harasta-panel hasia-dash-feed">
+            <div class="hasia-section-title">
+                <h2>آخر الحالات</h2>
+                <a class="hasia-soft-tag" href="/f/hasia/cases">@_periodLabel · الكل</a>
+            </div>
+            @if (_filtered.Count == 0)
+            {
+                <div class="hasia-empty">لا توجد حالات في هذه الفترة</div>
+            }
+            else
+            {
+                <div class="hasia-feed-list">
+                    @foreach (var c in _filtered.Take(10))
+                    {
+                        <a class="hasia-feed-row" href="/f/hasia/cases">
+                            <span class="mono hasia-time" lang="en">@c.OpenedTime</span>
+                            <span class="hasia-feed-text">@c.Complaint</span>
+                            <span class="hasia-status @StatusClass(c.Status)">@c.Status</span>
+                        </a>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="harasta-panel hasia-dash-stock @(_low.Count > 0 ? "hasia-warn" : null)">
+            <div class="hasia-section-title">
+                <h2>أدوية منخفضة المخزون</h2>
+                <a class="hasia-soft-tag" href="/f/hasia/ph-internal">الصيدليات</a>
+            </div>
+            @if (_low.Count == 0)
+            {
+                <div class="hasia-empty ok">لا يوجد نقص.</div>
+            }
+            else
+            {
+                <div class="hasia-stock-grid">
+                    @foreach (var s in _low)
+                    {
+                        <div class="hasia-stock-card">
+                            <strong class="mono hasia-count-pill danger" lang="en">@N(s.Quantity)</strong>
+                            <div>
+                                <div class="hasia-stock-name">@s.DrugName</div>
+                                <em class="muted">@LabelPh(s.Pharmacy)</em>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    private string _period = "day";
+    private string _month = DateTime.Now.ToString("yyyy-MM");
+    private DateOnly _pick = DateOnly.FromDateTime(DateTime.Now);
+    private string _periodLabel = "اليوم";
+    private List<PrisonCase> _all = [];
+    private List<PrisonCase> _filtered = [];
+    private Dictionary<string, int> _load = new();
+    private List<PrisonPharmacyItem> _low = [];
+    private int _inmateCount;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task SetPeriod(string p)
+    {
+        _period = p;
+        await ReloadAsync();
+    }
+
+    private async Task OnMonthValueChanged(string v)
+    {
+        _month = v;
+        await ReloadAsync();
+    }
+
+    private async Task OnPickValueChanged(string v)
+    {
+        if (DateOnly.TryParse(v, out var d))
+            _pick = d;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var live = await Ops.ListCasesAsync();
+        var arch = await Ops.ListCasesAsync(archiveOnly: true);
+        _all = live.Concat(arch).ToList();
+        _load = await Ops.LoadByServiceAsync();
+        var stockI = await Ops.ListStockAsync("internal");
+        var stockE = await Ops.ListStockAsync("external");
+        _low = stockI.Concat(stockE).Where(s => s.Quantity < 100).OrderBy(s => s.Quantity).ToList();
+        _inmateCount = (await Ops.ListInmatesAsync()).Count;
+
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        _filtered = _period switch
+        {
+            "month" => _all.Where(c => c.Day.ToString("yyyy-MM") == _month).ToList(),
+            "date" => _all.Where(c => c.Day == _pick).ToList(),
+            _ => _all.Where(c => c.Day == today).ToList()
+        };
+        _periodLabel = _period switch
+        {
+            "month" => _month,
+            "date" => _pick.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            _ => "اليوم"
+        };
+    }
+
+    private static readonly CultureInfo ArLatn = ArLatnCulture.Instance;
+
+    private static string N(int v) => v.ToString(CultureInfo.InvariantCulture);
+    private static string LabelPh(string ph) => ph == "external" ? "الخارجية" : "الداخلية";
+    private static string StatusClass(string s) => s switch
+    {
+        "جارية" => "live",
+        "معلّقة" => "hold",
+        "منجزة" => "done",
+        _ => ""
+    };
+}

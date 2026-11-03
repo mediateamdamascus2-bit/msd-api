@@ -1,0 +1,132 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Services.Hasia
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthState
+
+<div class="facility-shell harasta-skin hasia-skin">
+    <aside class="hasia-aside desktop-only">
+        <div class="hasia-aside-head">
+            <img src="images/logo.png" alt="" width="42" height="42" />
+            <div class="min-w-0">
+                <div class="hasia-brand-title">@HasiaData.TitleAr <span class="hasia-grade">C</span></div>
+                <div class="hasia-brand-sub">@HasiaData.RoleAr</div>
+            </div>
+        </div>
+        <nav class="hasia-aside-nav" aria-label="أقسام سجن حسيا">
+            @foreach (var group in HasiaData.Groups)
+            {
+                <div class="hasia-nav-group">
+                    <div class="hasia-nav-group-label">@group</div>
+                    @foreach (var item in HasiaData.Nav.Where(n => n.Group == group))
+                    {
+                        <a class="hasia-nav-item @(_view == item.Key ? "active" : null)"
+                           href="@Href(item.Key)" @onclick="CloseMenu">
+                            <span>@item.LabelAr</span>
+                            <em>@item.Hint</em>
+                        </a>
+                    }
+                </div>
+            }
+        </nav>
+    </aside>
+
+    <div class="hasia-main-col">
+        <header class="facility-top">
+            <div class="facility-top-main">
+                @if (_isAdmin)
+                {
+                    <a class="icon-btn" href="/admin/facilities" data-enhance-nav="false" title="عودة للإدارة">←</a>
+                }
+                <button type="button" class="icon-btn mobile-only" @onclick="ToggleMenu" aria-label="القائمة">☰</button>
+                <img src="images/logo.png" alt="" width="36" height="36" class="mobile-only" />
+                <div class="min-w-0">
+                    <div class="eyebrow light">PRISON CLINIC · حسيا</div>
+                    <h1 class="facility-title">@(_nav?.LabelAr ?? HasiaData.TitleAr)</h1>
+                </div>
+            </div>
+            <div class="facility-top-actions">
+                <AuthorizeView>
+                    <Authorized>
+                        <span class="shell-user hide-sm">@context.User.FindFirst(System.Security.Claims.ClaimTypes.GivenName)?.Value</span>
+                        @if (_isAdmin)
+                        {
+                            <span class="role-pill">ADMIN</span>
+                        }
+                        <a class="btn-outline" href="/auth/logout" data-enhance-nav="false">خروج</a>
+                    </Authorized>
+                </AuthorizeView>
+            </div>
+        </header>
+
+        @if (_menuOpen)
+        {
+            <div class="facility-drawer-backdrop mobile-only" @onclick="CloseMenu"></div>
+            <nav class="facility-drawer mobile-only" aria-label="أقسام سجن حسيا">
+                @foreach (var item in HasiaData.Nav)
+                {
+                    <a class="facility-drawer-item @(_view == item.Key ? "active" : null)"
+                       href="@Href(item.Key)" @onclick="CloseMenu">
+                        <span>@item.LabelAr</span>
+                    </a>
+                }
+            </nav>
+        }
+
+        <main class="facility-main">
+            @Body
+        </main>
+
+        <nav class="facility-bottom mobile-only" aria-label="تنقل سريع">
+            @foreach (var item in HasiaData.Nav.Where(n => n.MobilePrimary).Take(4))
+            {
+                <a class="facility-bottom-item @(_view == item.Key ? "active" : null)" href="@Href(item.Key)">
+                    <span>@item.LabelAr</span>
+                </a>
+            }
+            <button type="button" class="facility-bottom-item" @onclick="ToggleMenu">المزيد</button>
+        </nav>
+    </div>
+</div>
+
+@code {
+    private string _view = "overview";
+    private HasiaNavItem? _nav;
+    private bool _menuOpen;
+    private bool _isAdmin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        _isAdmin = state.User.IsInRole(AppRoles.Admin);
+        UpdateViewFromUri();
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        UpdateViewFromUri();
+        _menuOpen = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdateViewFromUri()
+    {
+        var path = Navigation.ToBaseRelativePath(Navigation.Uri).Trim('/');
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        _view = parts.Length >= 3 ? parts[2] : "overview";
+        _nav = HasiaData.Nav.FirstOrDefault(n => n.Key.Equals(_view, StringComparison.OrdinalIgnoreCase));
+        if (_nav is null)
+            _view = "overview";
+        _nav ??= HasiaData.Nav[0];
+    }
+
+    private static string Href(string view) =>
+        view.Equals("overview", StringComparison.OrdinalIgnoreCase) ? "/f/hasia" : $"/f/hasia/{view}";
+
+    private void ToggleMenu() => _menuOpen = !_menuOpen;
+    private void CloseMenu() => _menuOpen = false;
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}

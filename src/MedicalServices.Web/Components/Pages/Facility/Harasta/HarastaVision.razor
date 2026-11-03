@@ -1,0 +1,79 @@
+@using MedicalServices.Web.Services.Harasta
+
+<section class="harasta-stack">
+    <div class="harasta-panel">
+        <p class="eyebrow">STRATEGY 2026–2030</p>
+        <h1>الخارطة الاستراتيجية الخمسية</h1>
+        <p class="lead">مرحلتان: الاستراتيجية (2026–2028) ثم التميز (2029–2030) — نحو مستشفى ذكي، خدمي، تعليمي، بحثي، يحقق الاعتمادات الدولية.</p>
+    </div>
+
+    <div class="vision-roadmap">
+        @foreach (var year in HarastaData.VisionRoadmap)
+        {
+            <article class="vision-year tone-@year.Tone">
+                <strong class="vision-year-num">@year.Year</strong>
+                <h2>@year.Title</h2>
+                <ul class="vision-bullets">
+                    @foreach (var item in year.Items)
+                    {
+                        <li>@item</li>
+                    }
+                </ul>
+            </article>
+        }
+    </div>
+
+    <div class="vision-blocks">
+        @foreach (var block in HarastaData.VisionBlocks)
+        {
+            <article class="harasta-panel vision-block tone-@block.Tone">
+                <div class="vision-block-head">
+                    <span class="vision-block-key">@block.Key</span>
+                    <div>
+                        <p class="eyebrow">الكتلة المقترحة</p>
+                        <h2>@block.Title</h2>
+                    </div>
+                </div>
+                <ul class="vision-bullets">
+                    @foreach (var item in block.Items)
+                    {
+                        <li>@item</li>
+                    }
+                </ul>
+            </article>
+        }
+    </div>
+
+    <div class="vision-swot">
+        <article class="harasta-panel tone-green">
+            <p class="eyebrow">STRENGTHS</p>
+            <h2>نقاط القوة</h2>
+            <ul class="vision-bullets">
+                @foreach (var s in HarastaData.VisionSwot.Strengths)
+                {
+                    <li>@s</li>
+                }
+            </ul>
+        </article>
+        <article class="harasta-panel tone-red">
+            <p class="eyebrow">CHALLENGES</p>
+            <h2>التحديات</h2>
+            <ul class="vision-bullets">
+                @foreach (var c in HarastaData.VisionSwot.Challenges)
+                {
+                    <li>@c</li>
+                }
+            </ul>
+        </article>
+        <article class="harasta-panel tone-amber">
+            <p class="eyebrow">SUPPORT NEEDED</p>
+            <h2>الدعم المطلوب</h2>
+            <ul class="vision-bullets">
+                @foreach (var n in HarastaData.VisionSwot.Needs)
+                {
+                    <li>@n</li>
+                }
+            </ul>
+        </article>
+    </div>
+</section>

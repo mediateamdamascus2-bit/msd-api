@@ -1,0 +1,141 @@
+@page "/admin"
+@layout AdminLayout
+@attribute [Authorize(Roles = AppRoles.Admin)]
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@inject NavigationManager Navigation
+@inject IFacilityCatalog Facilities
+
+<PageTitle>لوحة الإدارة</PageTitle>
+
+<section class="admin-home cmd">
+    @{
+        var inactive = Math.Max(0, _total - _active);
+    }
+
+    <header class="cmd-hero">
+        <div class="cmd-hero-aura" aria-hidden="true"></div>
+        <div class="cmd-hero-copy">
+            <div class="cmd-brand-row">
+                <img src="images/logo.png" alt="" width="44" height="44" />
+                <div>
+                    <p class="cmd-kicker">إدارة الخدمات الطبية</p>
+                    <p class="cmd-kicker-en" dir="ltr">Medical Services Directorate</p>
+                </div>
+            </div>
+            <h1>مركز قيادة المواقع</h1>
+            <p class="cmd-lead">
+                دخول موحّد لكل واجهات المشافي والوحدات — راقب الحالة وافتح أي موقع بصلاحية الإدارة.
+            </p>
+            <div class="cmd-hero-actions">
+                <a class="cmd-btn solid" href="/admin/facilities">إدارة المواقع</a>
+                <a class="cmd-btn soft" href="/f/harasta">مشفى حرستا</a>
+            </div>
+        </div>
+    </header>
+
+    <div class="cmd-metrics" aria-label="مؤشرات المواقع">
+        <article class="cmd-metric">
+            <span>إجمالي المواقع</span>
+            <strong>@_total</strong>
+            <small>في دليل الإدارة</small>
+        </article>
+        <article class="cmd-metric accent">
+            <span>مواقع نشطة</span>
+            <strong>@_active</strong>
+            <small>جاهزة للدخول الآن</small>
+        </article>
+        <article class="cmd-metric">
+            <span>أنواع الواجهات</span>
+            <strong>@_types</strong>
+            <small>مشفى · عيادة · وحدة · مركز · مستودع</small>
+        </article>
+        <article class="cmd-metric @(inactive > 0 ? "alert" : null)">
+            <span>مواقع متوقفة</span>
+            <strong>@inactive</strong>
+            <small>@(inactive > 0 ? "تحتاج مراجعة الحالة" : "لا يوجد توقف حالياً")</small>
+        </article>
+    </div>
+
+    <section class="cmd-board">
+        <div class="cmd-board-head">
+            <div>
+                <p class="cmd-kicker soft">الدخول السريع</p>
+                <h2>واجهات المواقع</h2>
+            </div>
+            <p class="cmd-board-hint">اضغط «دخول الواجهة» لفتح واجهة الموقع مباشرة.</p>
+        </div>
+
+        <div class="cmd-filters" role="tablist" aria-label="تصفية حسب النوع">
+            <button type="button" class="cmd-chip @(_filter is null ? "on" : null)" @onclick="() => SetFilter(null)">الكل</button>
+            @foreach (FacilityType type in Enum.GetValues<FacilityType>())
+            {
+                <button type="button" class="cmd-chip @(_filter == type ? "on" : null)" @onclick="() => SetFilter(type)">
+                    @FacilityTypeLabels.ToArabic(type)
+                </button>
+            }
+        </div>
+
+        <div class="cmd-grid">
+            @foreach (var facility in FilteredFacilities)
+            {
+                var tone = TypeTone(facility.Type);
+                <article class="cmd-card @(facility.IsActive ? null : "is-off") tone-@tone">
+                    <div class="cmd-card-top">
+                        <span class="cmd-type">@FacilityTypeLabels.ToArabic(facility.Type)</span>
+                        <span class="cmd-live @(facility.IsActive ? "ok" : "off")">
+                            @(facility.IsActive ? "نشط" : "متوقف")
+                        </span>
+                    </div>
+                    <h3>@facility.NameAr</h3>
+                    <p class="cmd-loc">@facility.ProvinceAr</p>
+                    <code class="cmd-path" dir="ltr">/f/@facility.Id</code>
+                    <button type="button"
+                            class="cmd-enter"
+                            @onclick="() => OpenFacility(facility.Id)"
+                            disabled="@(!facility.IsActive)">
+                        دخول الواجهة
+                    </button>
+                </article>
+            }
+        </div>
+    </section>
+</section>
+
+@code {
+    private FacilityType? _filter;
+    private IReadOnlyList<Facility> _all = [];
+    private int _total;
+    private int _active;
+    private int _types;
+
+    private IEnumerable<Facility> FilteredFacilities =>
+        _all.Where(f => _filter is null || f.Type == _filter);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _all = await Facilities.GetAllAsync();
+        _total = _all.Count;
+        _active = _all.Count(f => f.IsActive);
+        _types = _all.Select(f => f.Type).Distinct().Count();
+    }
+
+    private void SetFilter(FacilityType? type) => _filter = type;
+
+    private void OpenFacility(string facilityId) =>
+        Navigation.NavigateTo(
+            string.Equals(facilityId, "harasta", StringComparison.OrdinalIgnoreCase)
+                ? "/f/harasta"
+                : $"/f/{facilityId}");
+
+    private static string TypeTone(FacilityType type) => type switch
+    {
+        FacilityType.Hospital => "teal",
+        FacilityType.PrisonClinic => "amber",
+        FacilityType.MedicalUnit => "cyan",
+        FacilityType.MedicalCenter => "green",
+        FacilityType.Warehouse => "slate",
+        _ => "teal"
+    };
+}

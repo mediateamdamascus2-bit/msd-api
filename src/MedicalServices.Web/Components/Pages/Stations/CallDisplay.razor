@@ -1,0 +1,208 @@
+@page "/stations/harasta/display"
+@layout EmptyLayout
+@using Microsoft.AspNetCore.Authorization
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@attribute [Authorize(Roles = "Admin,FacilityUser,StationUser")]
+@inject ICallBoard CallBoard
+@inject IJSRuntime Js
+@implements IDisposable
+
+<PageTitle>شاشة الاستدعاء — حرستا</PageTitle>
+
+<div class="call-board harasta-skin @(_flash ? "flash" : null) @(_current is null ? "idle" : "live")">
+    <header class="call-board-top">
+        <div class="call-board-brand">
+            <span class="call-board-mark" aria-hidden="true">H</span>
+            <div>
+                <p class="eyebrow light">شاشة الاستدعاء · مباشرة</p>
+                <h1>@HarastaData.TitleAr</h1>
+            </div>
+        </div>
+        <div class="call-board-clock" dir="ltr">
+            <strong>@_now.ToString("HH:mm:ss")</strong>
+            <span>@MedicalServices.Web.Services.ArLatnCulture.Format(_now, "dddd d MMMM yyyy")</span>
+        </div>
+    </header>
+
+    <div class="call-board-body">
+        <section class="call-board-main" aria-live="polite">
+            @if (_current is null)
+            {
+                <div class="call-board-empty">
+                    <span class="call-board-pulse" aria-hidden="true"></span>
+                    <p>بانتظار الاستدعاء</p>
+                    <em>عند استدعاء مريض من العيادة تظهر بياناته هنا مع التنبيه الصوتي</em>
+                </div>
+            }
+            else
+            {
+                <p class="call-board-kicker">يرجى من المراجع</p>
+                <h2 class="call-board-name">@_current.PatientName</h2>
+                <div class="call-board-meta">
+                    <span class="call-board-code">@_current.CaseNumber</span>
+                    @if (_current.CallCount > 1)
+                    {
+                        <span class="call-board-count">استدعاء @_current.CallCount</span>
+                    }
+                </div>
+                <p class="call-board-kicker soft">التوجه إلى</p>
+                <div class="call-board-dest">@Where(_current.Clinic)</div>
+            }
+        </section>
+
+        <aside class="call-board-side">
+            <div class="call-board-side-head">
+                <p class="eyebrow">السابق</p>
+                <h2>آخر الاستدعاءات</h2>
+            </div>
+            @if (_recent.Count == 0)
+            {
+                <p class="call-board-side-empty">لا توجد استدعاءات سابقة</p>
+            }
+            else
+            {
+                <div class="call-board-history">
+                    @foreach (var c in _recent)
+                    {
+                        <article class="call-board-row">
+                            <div>
+                                <strong>@c.PatientName</strong>
+                                <em>@c.CaseNumber</em>
+                            </div>
+                            <span>@Where(c.Clinic)</span>
+                        </article>
+                    }
+                </div>
+            }
+        </aside>
+    </div>
+
+    <footer class="call-board-foot">
+        <span>إدارة الخدمات الطبية</span>
+        <span>يُحدَّث تلقائياً عند الاستدعاء من محطات العيادات</span>
+    </footer>
+</div>
+
+@code {
+    private static readonly System.Globalization.CultureInfo ArLatn = MedicalServices.Web.Services.ArLatnCulture.Instance;
+
+    private PatientCallEvent? _current;
+    private List<PatientCallEvent> _recent = [];
+    private DateTime _now = DateTime.Now;
+    private bool _flash;
+    private System.Threading.Timer? _clock;
+    private System.Threading.Timer? _poll;
+    private string? _lastSpokenKey;
+    private CancellationTokenSource? _flashCts;
+
+    protected override void OnInitialized()
+    {
+        CallBoard.CallReceived += OnCall;
+        ApplyFromBoard(speakIfNew: false);
+        _clock = new System.Threading.Timer(_ =>
+        {
+            _ = InvokeAsync(() =>
+            {
+                _now = DateTime.Now;
+                StateHasChanged();
+            });
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+
+        // Poll as a reliable backup across Blazor circuits.
+        _poll = new System.Threading.Timer(_ =>
+        {
+            _ = InvokeAsync(() => ApplyFromBoard(speakIfNew: true));
+        }, null, TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(1.5));
+    }
+
+    private void OnCall(PatientCallEvent call)
+    {
+        if (!string.Equals(call.FacilityId, HarastaData.FacilityId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _ = InvokeAsync(() => ApplyCall(call, speakIfNew: true));
+    }
+
+    private void ApplyFromBoard(bool speakIfNew)
+    {
+        var current = CallBoard.GetCurrent(HarastaData.FacilityId);
+        var recent = CallBoard.GetRecent(HarastaData.FacilityId).ToList();
+        if (current is null)
+        {
+            _current = null;
+            _recent = recent;
+            StateHasChanged();
+            return;
+        }
+
+        ApplyCall(current, speakIfNew);
+        _recent = recent;
+    }
+
+    private void ApplyCall(PatientCallEvent call, bool speakIfNew)
+    {
+        var key = KeyOf(call);
+        var changed = !string.Equals(_lastSpokenKey, key, StringComparison.Ordinal);
+        _current = call;
+        _recent = CallBoard.GetRecent(HarastaData.FacilityId).ToList();
+        StateHasChanged();
+
+        if (!speakIfNew || !changed)
+            return;
+
+        _lastSpokenKey = key;
+        _ = AnnounceAsync(call);
+    }
+
+    private async Task AnnounceAsync(PatientCallEvent call)
+    {
+        _flashCts?.Cancel();
+        _flashCts = new CancellationTokenSource();
+        var token = _flashCts.Token;
+
+        _flash = true;
+        StateHasChanged();
+
+        try
+        {
+            await Js.InvokeVoidAsync("msdSpeakCall", new
+            {
+                name = call.PatientName,
+                code = call.CaseNumber,
+                destination = Where(call.Clinic)
+            });
+        }
+        catch
+        {
+            // Speech optional — browsers may block until user gesture.
+        }
+
+        try
+        {
+            await Task.Delay(2800, token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        if (token.IsCancellationRequested) return;
+        _flash = false;
+        StateHasChanged();
+    }
+
+    private static string KeyOf(PatientCallEvent c) => $"{c.CaseId}:{c.CallCount}:{c.At.UtcTicks}";
+
+    private static string Where(string clinic) =>
+        clinic == "الإسعاف" ? "الإسعاف" : $"عيادة {clinic}";
+
+    public void Dispose()
+    {
+        CallBoard.CallReceived -= OnCall;
+        _clock?.Dispose();
+        _poll?.Dispose();
+        _flashCts?.Cancel();
+        _flashCts?.Dispose();
+    }
+}

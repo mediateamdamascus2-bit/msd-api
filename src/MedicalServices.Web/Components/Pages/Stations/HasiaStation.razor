@@ -1,0 +1,125 @@
+@page "/stations/hasia/{Kind}"
+@layout EmptyLayout
+@attribute [Authorize]
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Services.Hasia
+@using MedicalServices.Web.Components.Pages.Facility.Hasia
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>@_pageTitle</PageTitle>
+
+@if (_denied)
+{
+    <section class="placeholder-panel">
+        <h1>غير مصرح</h1>
+        <p class="lead">لا تملك صلاحية الوصول إلى محطة سجن حسيا.</p>
+    </section>
+}
+else if (_kind is null)
+{
+    <section class="placeholder-panel">
+        <h1>محطة غير معروفة</h1>
+        <p class="lead">تحقق من رابط المحطة.</p>
+    </section>
+}
+else
+{
+    <div class="station-shell hasia-skin hasia-station">
+        <header class="station-top hasia-station-top">
+            <div class="hasia-station-brand">
+                <img src="images/logo.png" alt="" width="44" height="44" />
+                <div>
+                    <p class="eyebrow">سجن حسيا · محطة مستقلة</p>
+                    <h1>@_pageTitle</h1>
+                    <p class="station-sub">@_sub</p>
+                </div>
+            </div>
+            <div class="station-top-meta hasia-station-actions">
+                @if (_kind == "intake")
+                {
+                    <div class="hasia-station-tabs">
+                        <button type="button" class="@(_deskTab == "form" ? "on" : null)" @onclick='() => SetDeskTab("form")'>استمارة جديدة</button>
+                        <button type="button" class="@(_deskTab == "archive" ? "on" : null)" @onclick='() => SetDeskTab("archive")'>أرشيف النزلاء</button>
+                    </div>
+                }
+                else if (_kind == "triage")
+                {
+                    <div class="hasia-station-tabs">
+                        <button type="button" class="@(_deskTab == "form" ? "on" : null)" @onclick='() => SetDeskTab("form")'>فرز جديد</button>
+                        <button type="button" class="@(_deskTab == "archive" ? "on" : null)" @onclick='() => SetDeskTab("archive")'>أرشيف الفرز</button>
+                    </div>
+                }
+                <span class="hasia-station-badge">محطة مستقلة</span>
+            </div>
+        </header>
+        <div class="station-body">
+            @if (_kind == "intake" && _deskTab == "form") { <HasiaIntake /> }
+            else if (_kind == "intake" && _deskTab == "archive") { <HasiaInmates /> }
+            else if (_kind == "triage" && _deskTab == "form") { <HasiaTriage /> }
+            else if (_kind == "triage" && _deskTab == "archive") { <HasiaTriageArchive /> }
+            else if (_kind == "cases") { <HasiaCases /> }
+            else if (_kind == "ph-internal") { <HasiaPharmacy Pharmacy="internal" /> }
+            else if (_kind == "ph-external") { <HasiaPharmacy Pharmacy="external" /> }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string? Kind { get; set; }
+
+    private static readonly HashSet<string> Allowed = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "intake", "triage", "cases", "ph-internal", "ph-external"
+    };
+
+    private string? _kind;
+    private string _title = "محطة حسيا";
+    private string _sub = "";
+    private string _deskTab = "form";
+    private bool _denied;
+
+    private string _pageTitle =>
+        _kind == "intake" && _deskTab == "archive" ? "أرشيف النزلاء"
+        : _kind == "triage" && _deskTab == "archive" ? "أرشيف الفرز"
+        : _title;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+        var isAdmin = user.IsInRole(AppRoles.Admin);
+        var isStation = user.IsInRole(AppRoles.StationUser);
+        _denied = !(isAdmin || isStation);
+        if (_denied) return;
+
+        var next = Allowed.Contains(Kind ?? "") ? Kind!.Trim().ToLowerInvariant() : null;
+        if (next != _kind)
+            _deskTab = "form";
+        _kind = next;
+        if (_kind is null) return;
+        ApplyCopy();
+    }
+
+    private void SetDeskTab(string tab)
+    {
+        _deskTab = tab;
+        ApplyCopy();
+    }
+
+    private void ApplyCopy()
+    {
+        (_title, _sub) = _kind switch
+        {
+            "intake" => _deskTab == "archive"
+                ? ("أرشيف النزلاء", "الأضابير المسجّلة سابقًا — بحث وعرض الملف الطبي.")
+                : ("استقبال نزيل", "واجهة مستقلة لتعبئة الاستمارة الطبية وفتح الملف."),
+            "triage" => _deskTab == "archive"
+                ? ("أرشيف الفرز", "الحالات التي فُتحت من الفرز — بحث ومتابعة الوجهة والحالة.")
+                : ("الفرز", "استلام الشكايات ومرافقة المريض إلى الجهة المناسبة."),
+            "cases" => ("الحالات", "التشخيص والتحويل وإغلاق الحالات الجارية."),
+            "ph-internal" => ("الصيدلية الداخلية", "صرف الوصفات من صيدلية النقطة الطبية."),
+            "ph-external" => ("الصيدلية الخارجية", "صرف الوصفات من صيدلية المشفى."),
+            _ => ("محطة حسيا", "")
+        };
+    }
+}

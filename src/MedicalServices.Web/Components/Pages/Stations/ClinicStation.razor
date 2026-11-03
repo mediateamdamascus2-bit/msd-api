@@ -1,0 +1,408 @@
+@page "/stations/harasta/clinic/{ClinicName}"
+@layout EmptyLayout
+@attribute [Authorize(Roles = "Admin,StationUser")]
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IClinicService Clinics
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>@ClinicTitle — حرستا</PageTitle>
+
+<div class="station-shell harasta-skin clx-station @(_isEr ? "clx-er" : null)">
+    <header class="clx-hero">
+        <div class="clx-hero-brand">
+            <span class="clx-hero-mark" aria-hidden="true">H</span>
+            <div>
+                <p class="eyebrow light">محطة مستقلة · مشفى الشرطة في حرستا</p>
+                <h1>@ClinicTitle</h1>
+                <p class="clx-hero-sub">طابور المحوّلين · استدعاء · معاينة · تحويل</p>
+            </div>
+        </div>
+        <div class="clx-hero-meta">
+            <div class="clx-hero-kpi">
+                <em>بالانتظار</em>
+                <strong>@_queue.Count</strong>
+            </div>
+            <a class="btn-outline" href="/stations/harasta/display" data-enhance-nav="false" target="_blank">شاشة الاستدعاء</a>
+            <a class="btn-outline" href="/auth/logout" data-enhance-nav="false">خروج</a>
+        </div>
+    </header>
+
+    @if (_denied)
+    {
+        <section class="clx-body">
+            <div class="clx-empty clx-empty-block">
+                <span class="clx-empty-icon" aria-hidden="true">!</span>
+                <h2>غير مصرح</h2>
+                <p>هذه العيادة مرتبطة بحساب محطة مختلف. سجّل الدخول بالحساب المخصص لهذه العيادة.</p>
+            </div>
+        </section>
+    }
+    else if (_invalid)
+    {
+        <section class="clx-body">
+            <div class="clx-empty clx-empty-block">
+                <span class="clx-empty-icon" aria-hidden="true">?</span>
+                <h2>عيادة غير معروفة</h2>
+                <p>تحقق من رابط المحطة ثم أعد فتحه.</p>
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="clx-body">
+            <div class="clx-stats">
+                <article class="clx-stat accent">
+                    <span>في الطابور</span>
+                    <strong>@_queue.Count</strong>
+                </article>
+                <article class="clx-stat">
+                    <span>مستدعى الآن</span>
+                    <strong>@_queue.Count(x => x.CallCount > 0)</strong>
+                </article>
+                <article class="clx-stat soft">
+                    <span>اليوم</span>
+                    <strong class="clx-stat-date">@DateTime.Now.ToString("yyyy-MM-dd")</strong>
+                </article>
+            </div>
+
+            <div class="clx-layout">
+                <aside class="clx-panel clx-queue-panel">
+                    <div class="clx-panel-head">
+                        <div>
+                            <p class="eyebrow">QUEUE</p>
+                            <h2>طابور الانتظار</h2>
+                        </div>
+                        <button type="button" class="clx-icon-btn" disabled="@_busy" @onclick="ReloadAsync" title="تحديث">
+                            تحديث
+                        </button>
+                    </div>
+
+                    @if (_queue.Count == 0)
+                    {
+                        <div class="clx-empty">
+                            <span class="clx-empty-icon soft" aria-hidden="true">○</span>
+                            <p>لا يوجد مرضى في الطابور</p>
+                            <span class="clx-empty-hint">يظهر المرضى هنا بعد تحويلهم من الاستقبال</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="clx-queue-list" role="list">
+                            @{ var i = 0; }
+                            @foreach (var item in _queue)
+                            {
+                                i++;
+                                var on = _selected?.Id == item.Id;
+                                var called = item.CallCount > 0;
+                                <button type="button"
+                                        role="listitem"
+                                        class="clx-queue-item @(on ? "on" : null) @(called ? "called" : null)"
+                                        @onclick="() => SelectPatient(item)">
+                                    <span class="clx-queue-ord">@i.ToString("00")</span>
+                                    <span class="clx-queue-main">
+                                        <strong>@item.PatientName</strong>
+                                        <em class="mono">@item.CaseNumber</em>
+                                    </span>
+                                    <span class="clx-queue-meta">
+                                        @if (called)
+                                        {
+                                            <span class="clx-pill warn">استدعاء @item.CallCount</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="clx-pill">انتظار</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(item.Age?.ToString()))
+                                        {
+                                            <span class="clx-age">@item.Age سنة</span>
+                                        }
+                                    </span>
+                                </button>
+                            }
+                        </div>
+                    }
+                </aside>
+
+                <div class="clx-panel clx-work-panel">
+                    @if (_selected is null)
+                    {
+                        <div class="clx-empty clx-empty-tall">
+                            <span class="clx-empty-icon soft" aria-hidden="true">◇</span>
+                            <h2>اختر مريضاً من الطابور</h2>
+                            <p>ستظهر هنا بطاقة المعاينة وأزرار الاستدعاء والتحويل</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="clx-patient-banner">
+                            <div class="clx-patient-avatar" aria-hidden="true">@Initials(_selected.PatientName)</div>
+                            <div class="clx-patient-id">
+                                <p class="eyebrow">FILE · @_selected.CaseNumber</p>
+                                <h2>@_selected.PatientName</h2>
+                                <p class="clx-patient-sub">
+                                    @(string.IsNullOrWhiteSpace(_selected.NationalId) ? "بدون هوية" : _selected.NationalId)
+                                    · @(_selected.Age?.ToString() ?? "—") سنة
+                                    · @PatientCaseStatusLabels.ToArabic(_selected.Status)
+                                </p>
+                            </div>
+                            @if (_selected.CallCount > 0)
+                            {
+                                <span class="clx-banner-badge">مُستدعى × @_selected.CallCount</span>
+                            }
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(_message))
+                        {
+                            <div class="clx-flash @(_error ? "err" : "ok")" role="status">@_message</div>
+                        }
+
+                        <div class="clx-sections">
+                            <section class="clx-section">
+                                <header class="clx-section-head">
+                                    <h3>المعاينة</h3>
+                                    <p>بيانات الطبيب والملاحظة السريرية</p>
+                                </header>
+                                <div class="clx-fields">
+                                    <label class="clx-field">
+                                        <span>الطبيب المعاين</span>
+                                        <input class="input" @bind="_doctor" placeholder="اسم الطبيب" autocomplete="off" />
+                                    </label>
+                                    <label class="clx-field wide">
+                                        <span>ملاحظة / شكاية</span>
+                                        <textarea class="input clx-textarea" rows="2" @bind="_note" placeholder="اختياري عند الإنهاء أو التحويل لقسم"></textarea>
+                                    </label>
+                                </div>
+                            </section>
+
+                            <section class="clx-section">
+                                <header class="clx-section-head">
+                                    <h3>التحويلات</h3>
+                                    <p>عيادة أخرى أو قسم تحويل</p>
+                                </header>
+                                <div class="clx-fields two">
+                                    <label class="clx-field">
+                                        <span>تحويل إلى عيادة</span>
+                                        <select class="input" @bind="_transferTo">
+                                            <option value="">— اختر عيادة —</option>
+                                            @foreach (var c in HarastaData.Clinics.Where(x => x != _clinic))
+                                            {
+                                                <option value="@c">@(c == "الإسعاف" ? c : $"عيادة {c}")</option>
+                                            }
+                                        </select>
+                                    </label>
+                                    <label class="clx-field">
+                                        <span>تحويل إلى قسم</span>
+                                        <select class="input" @bind="_referDept">
+                                            <option value="">— اختر قسماً —</option>
+                                            @foreach (var d in HarastaData.Departments)
+                                            {
+                                                <option value="@d">@d</option>
+                                            }
+                                        </select>
+                                    </label>
+                                    <label class="clx-field wide">
+                                        <span>سبب الإعادة للاستقبال</span>
+                                        <input class="input" @bind="_returnReason" placeholder="مطلوب عند الإعادة فقط" />
+                                    </label>
+                                </div>
+                            </section>
+                        </div>
+
+                        <div class="clx-actions">
+                            <button type="button" class="clx-btn primary" disabled="@_busy" @onclick="CallAsync">
+                                @(_selected.CallCount > 0 ? $"إعادة الاستدعاء ({_selected.CallCount})" : "استدعاء المريض")
+                            </button>
+                            <button type="button" class="clx-btn success" disabled="@_busy" @onclick="CompleteAsync">إنهاء وخروج</button>
+                            <button type="button" class="clx-btn ghost" disabled="@_busy" @onclick="ReturnAsync">إعادة للاستقبال</button>
+                            <button type="button" class="clx-btn outline" disabled="@(_busy || string.IsNullOrWhiteSpace(_transferTo))" @onclick="TransferAsync">تحويل عيادة</button>
+                            <button type="button" class="clx-btn outline cyan" disabled="@(_busy || string.IsNullOrWhiteSpace(_referDept))" @onclick="ReferDeptAsync">تحويل قسم</button>
+                        </div>
+                    }
+                </div>
+            </div>
+        </section>
+    }
+</div>
+
+@code {
+    [Parameter] public string ClinicName { get; set; } = string.Empty;
+
+    private string _clinic = string.Empty;
+    private bool _denied;
+    private bool _invalid;
+    private List<PatientCase> _queue = [];
+    private PatientCase? _selected;
+    private string _doctor = string.Empty;
+    private string _note = string.Empty;
+    private string _returnReason = string.Empty;
+    private string _transferTo = string.Empty;
+    private string _referDept = string.Empty;
+    private bool _busy;
+    private bool _error;
+    private string? _message;
+
+    private bool _isEr => _clinic == "الإسعاف";
+    private string ClinicTitle => _isEr ? "الإسعاف" : (string.IsNullOrWhiteSpace(_clinic) ? "العيادة" : $"عيادة {_clinic}");
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+        var isAdmin = user.IsInRole(AppRoles.Admin);
+        var linked = user.FindFirst(AppClaimTypes.FacilityId)?.Value;
+        var home = user.FindFirst(AppClaimTypes.HomePath)?.Value;
+
+        _clinic = Uri.UnescapeDataString(ClinicName ?? string.Empty).Trim();
+        _invalid = !HarastaData.Clinics.Contains(_clinic);
+
+        var stationOnly = user.IsInRole(AppRoles.StationUser) && !isAdmin;
+        if (stationOnly)
+        {
+            var assigned = HarastaStationAccounts.ClinicFromHomePath(home);
+            _denied = !string.Equals(assigned, _clinic, StringComparison.Ordinal);
+        }
+        else
+        {
+            _denied = !(isAdmin || string.Equals(linked, HarastaData.FacilityId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!_denied && !_invalid)
+            await ReloadAsync();
+    }
+
+    private void SelectPatient(PatientCase item)
+    {
+        _selected = item;
+        _message = null;
+    }
+
+    private static string Initials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "؟";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1) return parts[0][..Math.Min(1, parts[0].Length)];
+        return $"{parts[0][0]}{parts[^1][0]}";
+    }
+
+    private async Task ReloadAsync()
+    {
+        _queue = (await Clinics.GetQueueAsync(HarastaData.FacilityId, _clinic)).ToList();
+        if (_selected is not null)
+            _selected = _queue.FirstOrDefault(x => x.Id == _selected.Id);
+    }
+
+    private async Task<string> UserAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        return state.User.Identity?.Name ?? "unknown";
+    }
+
+    private async Task CallAsync()
+    {
+        if (_selected is null) return;
+        _busy = true;
+        try
+        {
+            var row = await Clinics.CallPatientAsync(HarastaData.FacilityId, _selected.Id, await UserAsync());
+            _error = false;
+            _message = $"تم استدعاء {row.PatientName} (مرة {row.CallCount}).";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task CompleteAsync()
+    {
+        if (_selected is null) return;
+        _busy = true;
+        try
+        {
+            await Clinics.CompleteVisitAsync(HarastaData.FacilityId, _selected.Id,
+                new ClinicCompleteRequest(_doctor, _note, _note), await UserAsync());
+            _error = false;
+            _message = "تم إنهاء المعاينة.";
+            _selected = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task ReturnAsync()
+    {
+        if (_selected is null) return;
+        _busy = true;
+        try
+        {
+            await Clinics.ReturnToReceptionAsync(HarastaData.FacilityId, _selected.Id,
+                new ClinicReturnRequest(_doctor, _returnReason), await UserAsync());
+            _error = false;
+            _message = "أُعيد للاستقبال.";
+            _selected = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task TransferAsync()
+    {
+        if (_selected is null || string.IsNullOrWhiteSpace(_transferTo)) return;
+        _busy = true;
+        try
+        {
+            await Clinics.TransferClinicAsync(
+                HarastaData.FacilityId, _selected.Id, _transferTo, _doctor, await UserAsync());
+            _error = false;
+            _message = $"تم تحويل {_selected.CaseNumber} إلى {_transferTo}.";
+            _selected = null;
+            _transferTo = string.Empty;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task ReferDeptAsync()
+    {
+        if (_selected is null || string.IsNullOrWhiteSpace(_referDept)) return;
+        _busy = true;
+        try
+        {
+            await Clinics.ReferToDepartmentAsync(
+                HarastaData.FacilityId, _selected.Id, _referDept, _doctor, _note, await UserAsync());
+            _error = false;
+            _message = $"حُوِّل {_selected.CaseNumber} إلى {_referDept}.";
+            _selected = null;
+            _referDept = string.Empty;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+}

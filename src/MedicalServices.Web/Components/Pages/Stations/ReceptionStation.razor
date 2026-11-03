@@ -1,0 +1,61 @@
+@page "/stations/harasta/reception"
+@layout EmptyLayout
+@attribute [Authorize(Roles = "Admin,StationUser")]
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Components.Pages.Facility.Harasta
+@using MedicalServices.Web.Services.Harasta
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>الاستقبال — حرستا</PageTitle>
+
+<div class="station-shell harasta-skin rx-station">
+    <header class="rx-hero">
+        <div class="rx-hero-brand">
+            <span class="rx-hero-mark" aria-hidden="true"></span>
+            <div>
+                <p class="eyebrow light">محطة مستقلة · مشفى الشرطة في حرستا</p>
+                <h1>الاستقبال</h1>
+                <p class="rx-hero-sub">تسجيل الوصول · فتح الإضبارة · توجيه العيادة</p>
+            </div>
+        </div>
+        <div class="rx-hero-meta">
+            <AuthorizeView>
+                <Authorized>
+                    <span class="rx-user-chip">
+                        <em>موظف</em>
+                        @context.User.FindFirst(System.Security.Claims.ClaimTypes.GivenName)?.Value
+                    </span>
+                </Authorized>
+            </AuthorizeView>
+            <a class="btn-outline" href="/auth/logout" data-enhance-nav="false">خروج</a>
+        </div>
+    </header>
+
+    @if (_denied)
+    {
+        <section class="harasta-panel station-body">
+            <h2>غير مصرح</h2>
+            <p class="lead">هذه المحطة لموظف استقبال حرستا أو الإدارة فقط.</p>
+        </section>
+    }
+    else
+    {
+        <div class="station-body rx-station-body">
+            <HarastaReception DeskMode="true" />
+        </div>
+    }
+</div>
+
+@code {
+    private bool _denied;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+        var isAdmin = user.IsInRole(AppRoles.Admin);
+        var linked = user.FindFirst(AppClaimTypes.FacilityId)?.Value;
+        _denied = !(isAdmin || string.Equals(linked, HarastaData.FacilityId, StringComparison.OrdinalIgnoreCase));
+    }
+}

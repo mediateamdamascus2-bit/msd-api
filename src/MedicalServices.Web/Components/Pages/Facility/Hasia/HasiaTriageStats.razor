@@ -1,0 +1,84 @@
+@using System.Globalization
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="harasta-stack hasia-page">
+    <header class="hasia-page-head harasta-panel">
+        <div class="hasia-page-head-icon" aria-hidden="true">◎</div>
+        <div class="hasia-page-head-text">
+            <p class="eyebrow">STATS · TRIAGE</p>
+            <h1>إحصائيات الفرز</h1>
+            <p class="lead">متابعة المسؤول فقط — فتح الحالات من محطة الفرز المستقلة.</p>
+        </div>
+        <a class="btn-enter compact" href="/stations/hasia/triage" data-enhance-nav="false">فتح محطة الفرز</a>
+    </header>
+
+    <div class="hasia-kpi-row">
+        <div class="hasia-kpi"><strong class="mono" lang="en">@N(_today.Count)</strong><span>فُتحت اليوم</span></div>
+        <div class="hasia-kpi accent-cyan"><strong class="mono" lang="en">@N(_waiting.Count)</strong><span>بانتظار الاستلام</span></div>
+        <div class="hasia-kpi"><strong class="mono" lang="en">@N(_live)</strong><span>جارية</span></div>
+        <div class="hasia-kpi accent-amber"><strong class="mono" lang="en">@N(_held)</strong><span>معلّقة</span></div>
+    </div>
+
+    <div class="hasia-two-col">
+        <div class="harasta-panel">
+            <h2>وجهات الانتظار</h2>
+            @if (_byDest.Count == 0)
+            {
+                <p class="muted">لا مرضى بالانتظار</p>
+            }
+            else
+            {
+                @foreach (var (id, n) in _byDest)
+                {
+                    var s = HasiaData.FindService(id);
+                    <div class="hasia-load-row">
+                        <span>@(s is null ? id : $"{HasiaData.ZoneLabel(s.Zone)} · {s.Name}")</span>
+                        <strong class="mono" lang="en">@N(n)</strong>
+                    </div>
+                }
+            }
+        </div>
+        <div class="harasta-panel">
+            <h2>آخر الفرز اليوم</h2>
+            @if (_today.Count == 0)
+            {
+                <p class="muted">لا فرز اليوم</p>
+            }
+            else
+            {
+                @foreach (var c in _today.Take(10))
+                {
+                    <div class="hasia-load-row">
+                        <strong class="mono">#@c.InmateNo</strong>
+                        <span>@c.Complaint</span>
+                        <em class="chip">@c.Status</em>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    private List<PrisonCase> _today = [];
+    private List<PrisonCase> _waiting = [];
+    private List<(string Id, int N)> _byDest = [];
+    private int _live, _held;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var live = await Ops.ListCasesAsync();
+        var arch = await Ops.ListCasesAsync(archiveOnly: true);
+        var all = live.Concat(arch).ToList();
+        var day = DateOnly.FromDateTime(DateTime.Today);
+        _today = all.Where(c => c.Day == day).OrderByDescending(c => c.OpenedTime).ToList();
+        _waiting = live.Where(c => c.Status == "جارية" && c.Steps.Count == 0).ToList();
+        _byDest = _waiting.GroupBy(c => c.AtServiceId).Select(g => (g.Key, g.Count())).OrderByDescending(x => x.Item2).ToList();
+        _live = live.Count(c => c.Status == "جارية");
+        _held = live.Count(c => c.Status == "معلّقة");
+    }
+
+    private static string N(int v) => v.ToString(CultureInfo.InvariantCulture);
+}

@@ -1,0 +1,27 @@
+@page "/"
+@using MedicalServices.Infrastructure.Identity
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = state.User;
+
+        if (user.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login", replace: true);
+            return;
+        }
+
+        if (user.IsInRole(MedicalServices.Domain.Enums.AppRoles.Admin))
+        {
+            Navigation.NavigateTo("/admin", replace: true);
+            return;
+        }
+
+        var facilityId = user.FindFirst(AppClaimTypes.FacilityId)?.Value;
+        Navigation.NavigateTo(string.IsNullOrWhiteSpace(facilityId) ? "/login" : $"/f/{facilityId}", replace: true);
+    }
+}

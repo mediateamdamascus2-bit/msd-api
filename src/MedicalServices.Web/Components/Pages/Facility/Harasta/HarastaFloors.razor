@@ -1,0 +1,28 @@
+@using MedicalServices.Web.Services.Harasta
+
+<section class="harasta-stack">
+    <div class="harasta-panel">
+        <p class="eyebrow">FLOORS</p>
+        <h1>توزيع الطوابق</h1>
+        <p class="lead">خريطة مبسّطة لتوزّع الأجنحة والخدمات على طوابق المشفى.</p>
+    </div>
+
+    <div class="floors-list">
+        @foreach (var floor in HarastaData.Floors)
+        {
+            <article class="floor-card">
+                <div class="floor-badge">
+                    <strong>@floor.Floor</strong>
+                    @if (!string.IsNullOrWhiteSpace(floor.Side))
+                    {
+                        <span>@floor.Side</span>
+                    }
+                </div>
+                <div class="floor-body">
+                    <h3>@floor.Unit</h3>
+                    <p>@floor.Note</p>
+                </div>
+            </article>
+        }
+    </div>
+</section>

@@ -1,0 +1,352 @@
+@using System.Text.Json
+@using MedicalServices.Web.Services.Hasia
+@using Microsoft.AspNetCore.Components.Forms
+@inject IHasiaOpsService Ops
+
+<section class="harasta-stack hasia-page @(_sex == "أنثى" ? "hasia-pink" : null)">
+    <header class="hasia-page-head harasta-panel">
+        <div class="hasia-page-head-icon" aria-hidden="true">▤</div>
+        <div class="hasia-page-head-text">
+            <p class="eyebrow">PATIENT FORM · فرع صحة السجون</p>
+            <h1>استقبال نزيل جديد</h1>
+            <p class="lead">استمارة مريض — مكتب الاستقبال</p>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="@(_error ? "login-error" : "save-ok")">@_message</div>
+    }
+
+    <div class="harasta-panel">
+        <h2>معلومات النزيل</h2>
+        <div class="admissions-form">
+            <div class="field"><label>رقم الملف *</label><input class="input" @bind="_file" /></div>
+            <div class="field"><label>رقم النزيل *</label><input class="input" @bind="_no" /></div>
+            <div class="field">
+                <label>زمرة الدم</label>
+                <NiceSelect @bind-Value="_blood" Options="_bloodOpts" Placeholder="—" />
+            </div>
+        </div>
+        <div class="queue-head" style="margin-top:1rem">
+            <strong>أماكن الاحتجاز التي زارها</strong>
+            <button type="button" class="chip on" @onclick="AddStay">+ إضافة مكان</button>
+        </div>
+        <datalist id="prison-names">@foreach (var n in HasiaData.PrisonNames) { <option value="@n" /> }</datalist>
+        @for (var i = 0; i < _stays.Count; i++)
+        {
+            var idx = i;
+            var st = _stays[idx];
+            <div class="admissions-form" style="margin-top:0.5rem">
+                <div class="field" style="grid-column:1 / -1">
+                    <label>مكان @(idx + 1)</label>
+                    <input class="input" list="prison-names" value="@st.Place" @onchange="e => SetStay(idx, StayField.Place, e)" />
+                </div>
+                <div class="field"><label>دخول</label><NiceDatePicker Value="@st.Entry" ValueChanged="v => SetStayValue(idx, StayField.Entry, v)" AllowClear="false" /></div>
+                <div class="field">
+                    <label>خروج</label>
+                    @if (idx == _stays.Count - 1 && string.IsNullOrEmpty(st.Exit))
+                    {
+                        <div class="input" style="display:flex;align-items:center;color:var(--hasia-point);font-weight:700">حاليًا</div>
+                    }
+                    else
+                    {
+                        <NiceDatePicker Value="@(st.Exit ?? "")" ValueChanged="v => SetStayValue(idx, StayField.Exit, v)" />
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="harasta-panel">
+        <h2>بيانات شخصية</h2>
+        <div class="admissions-form">
+            <div class="field"><label>الجنسية</label><input class="input" @bind="_nationality" /></div>
+            <div class="field"><label>مكان الولادة</label><input class="input" @bind="_birthPlace" /></div>
+            <div class="field"><label>تاريخ الميلاد</label><NiceDatePicker @bind-Value="_birthDate" /></div>
+            <div class="field">
+                <label>الجنس</label>
+                <div class="chip-row">
+                    <button type="button" class="chip @(_sex == "ذكر" ? "on" : null)" @onclick='() => _sex = "ذكر"'>ذكر</button>
+                    <button type="button" class="chip @(_sex == "أنثى" ? "on" : null)" @onclick='() => _sex = "أنثى"'>أنثى</button>
+                </div>
+            </div>
+            <div class="field">
+                <label>الحالة الاجتماعية</label>
+                <div class="chip-row">
+                    <button type="button" class="chip @(_marital == "متزوج" ? "on" : null)" @onclick='() => _marital = "متزوج"'>متزوج</button>
+                    <button type="button" class="chip @(_marital == "عازب" ? "on" : null)" @onclick='() => _marital = "عازب"'>عازب</button>
+                </div>
+            </div>
+            <div class="field"><label>العنوان</label><input class="input" @bind="_address" /></div>
+            <div class="field" style="grid-column:1 / -1"><label>قريب | جهة اتصال</label><input class="input" @bind="_relative" /></div>
+        </div>
+    </div>
+
+    <div class="harasta-panel">
+        <h2>السوابق المرضية</h2>
+        <div class="hasia-hist-grid">
+            @foreach (var h in HasiaData.HistoryItems)
+            {
+                var on = _hist.ContainsKey(h);
+                <label class="hasia-hist-item @(on ? "on" : null)">
+                    <input type="checkbox" checked="@on" @onchange="e => ToggleHist(h, (bool)(e.Value ?? false))" />
+                    <span>@h</span>
+                    @if (on)
+                    {
+                        <input class="input" style="height:2rem;font-size:0.85rem" placeholder="تفاصيل" value="@_hist[h]" @onchange="e => SetHistDetail(h, e)" />
+                    }
+                </label>
+            }
+        </div>
+        <div class="admissions-form" style="margin-top:1rem">
+            <div class="field"><label>السوابق الدوائية</label><input class="input" @bind="_drugs" /></div>
+            <div class="field"><label>السوابق التحسسية</label><input class="input" @bind="_allergies" /></div>
+            <div class="field"><label>التدخين</label><input class="input" @bind="_smoking" /></div>
+            <div class="field" style="grid-column:1 / -1"><label>المشاهدة والتأمل العام</label><input class="input" @bind="_general" /></div>
+        </div>
+    </div>
+
+    @if (_sex == "أنثى")
+    {
+        <div class="harasta-panel">
+            <h2>للنزيلات الإناث</h2>
+            <div class="admissions-form">
+                <div class="field"><label>آخر دورة شهرية</label><NiceDatePicker @bind-Value="_lmp" /></div>
+                <div class="field"><label>الحمل</label><input class="input" @bind="_pregnancy" /></div>
+                <div class="field"><label>طفل مرافق</label><input class="input" @bind="_child" /></div>
+            </div>
+        </div>
+    }
+
+    <div class="harasta-panel">
+        <h2>العلامات الحيوية</h2>
+        <div class="admissions-form">
+            @foreach (var v in HasiaData.Vitals.Where(x => x != "BMI"))
+            {
+                <div class="field">
+                    <label>@v</label>
+                    <input class="input" value="@_vt.GetValueOrDefault(v)" @onchange="e => SetVt(v, e.Value?.ToString())" />
+                </div>
+            }
+            <div class="field"><label>BMI</label><input class="input" value="@Bmi" readonly /></div>
+        </div>
+    </div>
+
+    <div class="harasta-panel">
+        <h2>الفحص البدني</h2>
+        <div class="admissions-form">
+            @foreach (var e in HasiaData.Exam.Take(4))
+            {
+                <div class="field"><label>@e</label><input class="input" value="@_ex.GetValueOrDefault(e)" @onchange="ev => SetExam(e, ev)" /></div>
+            }
+        </div>
+    </div>
+
+    <div class="harasta-panel">
+        <header class="hasia-attach-head">
+            <h2>المرفقات</h2>
+            <span class="eyebrow">ATTACHMENTS · IMAGES &amp; PDF</span>
+        </header>
+        <label class="hasia-drop @(_drag ? "on" : null)"
+               @ondragenter="() => _drag = true"
+               @ondragleave="() => _drag = false"
+               @ondragover:preventDefault
+               @ondragover:stopPropagation>
+            <InputFile OnChange="OnFilesAsync" multiple accept="image/*,.pdf,application/pdf" class="hasia-drop-input" />
+            <span class="hasia-drop-icon" aria-hidden="true">▤</span>
+            <strong>اسحب الملفات هنا أو انقر للاختيار</strong>
+            <span>صور (JPG، PNG) أو ملفات PDF — تقارير، صور أشعة، وثائق</span>
+        </label>
+        @if (_attachments.Count > 0)
+        {
+            <div class="hasia-attach-grid">
+                @foreach (var a in _attachments)
+                {
+                    <article class="hasia-attach-card">
+                        @if (a.Kind == "image")
+                        {
+                            <img src="@a.Url" alt="@a.Name" />
+                        }
+                        else
+                        {
+                            <div class="hasia-attach-pdf">PDF</div>
+                        }
+                        <div>
+                            <b title="@a.Name">@a.Name</b>
+                            <em class="mono" lang="en">@FormatKb(a.Size)</em>
+                        </div>
+                        <button type="button" class="hasia-attach-x" @onclick="() => RemoveAttachment(a)">×</button>
+                    </article>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="harasta-panel">
+        <div class="admissions-form">
+            <div class="field" style="grid-column:1 / -1">
+                <label>الموافقة على تقديم الخدمات الطبية *</label>
+                <div class="chip-row">
+                    <button type="button" class="chip @(_consent == "نعم" ? "on" : null)" @onclick='() => _consent = "نعم"'>نعم</button>
+                    <button type="button" class="chip @(_consent == "لا" ? "on" : null)" @onclick='() => _consent = "لا"'>لا</button>
+                </div>
+            </div>
+            <div class="field"><label>منظم الملف</label><input class="input" @bind="_organizer" /></div>
+        </div>
+        <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@_saving" @onclick="SaveAsync">
+            @(_saving ? "جاري الحفظ..." : "حفظ وفتح الملف الطبي")
+        </button>
+    </div>
+</section>
+
+@code {
+    private static readonly NiceSelect.Opt[] _bloodOpts =
+    [
+        new("", "—"),
+        new("O+", "O+"), new("O-", "O-"),
+        new("A+", "A+"), new("A-", "A-"),
+        new("B+", "B+"), new("B-", "B-"),
+        new("AB+", "AB+"), new("AB-", "AB-"),
+    ];
+    private string _file = "", _no = "", _blood = "", _nationality = "سوري", _birthPlace = "", _birthDate = "";
+    private string _sex = "ذكر", _marital = "عازب", _address = "", _relative = "";
+    private string _drugs = "", _allergies = "", _smoking = "", _general = "", _consent = "", _organizer = "";
+    private string _lmp = "", _pregnancy = "", _child = "";
+    private string? _message;
+    private bool _error, _saving, _drag;
+    private List<StayDto> _stays = [new("حسيا", DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd"), null)];
+    private Dictionary<string, string> _hist = new();
+    private Dictionary<string, string> _vt = new();
+    private Dictionary<string, string> _ex = new();
+    private List<AttachItem> _attachments = [];
+    private const long MaxAttachBytes = 4 * 1024 * 1024;
+
+    private sealed record AttachItem(string Name, string Kind, string Url, long Size);
+
+    private static string FormatKb(long size) =>
+        $"{(size / 1024.0).ToString("0", System.Globalization.CultureInfo.InvariantCulture)} KB";
+
+    private void RemoveAttachment(AttachItem a) => _attachments.Remove(a);
+
+    private async Task OnFilesAsync(InputFileChangeEventArgs e)
+    {
+        _drag = false;
+        foreach (var file in e.GetMultipleFiles(12))
+        {
+            var isPdf = string.Equals(file.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase)
+                || file.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
+            var isImg = file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+            if (!isPdf && !isImg)
+            {
+                _error = true;
+                _message = "يُسمح فقط بالصور وملفات PDF";
+                continue;
+            }
+            if (file.Size > MaxAttachBytes)
+            {
+                _error = true;
+                _message = $"الملف {file.Name} أكبر من 4 ميغابايت";
+                continue;
+            }
+            await using var stream = file.OpenReadStream(MaxAttachBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var b64 = Convert.ToBase64String(ms.ToArray());
+            var mime = string.IsNullOrWhiteSpace(file.ContentType)
+                ? (isPdf ? "application/pdf" : "application/octet-stream")
+                : file.ContentType;
+            _attachments.Add(new AttachItem(file.Name, isPdf ? "pdf" : "image", $"data:{mime};base64,{b64}", file.Size));
+        }
+    }
+
+    private string Bmi
+    {
+        get
+        {
+            if (!double.TryParse(_vt.GetValueOrDefault("الطول"), out var h) || h <= 0) return "";
+            if (!double.TryParse(_vt.GetValueOrDefault("الوزن"), out var w) || w <= 0) return "";
+            return (w / Math.Pow(h / 100.0, 2)).ToString("0.0");
+        }
+    }
+
+    private void AddStay()
+    {
+        var last = _stays[^1];
+        var exit = string.IsNullOrEmpty(last.Exit) ? DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd") : last.Exit!;
+        _stays[^1] = last with { Exit = exit };
+        _stays.Add(new StayDto("", exit, null));
+    }
+
+    private enum StayField { Place, Entry, Exit }
+
+    private void SetStay(int i, StayField field, ChangeEventArgs e) =>
+        SetStayValue(i, field, e.Value?.ToString());
+
+    private void SetStayValue(int i, StayField field, string? v)
+    {
+        var s = _stays[i];
+        _stays[i] = field switch
+        {
+            StayField.Place => s with { Place = v ?? "" },
+            StayField.Entry => s with { Entry = v ?? "" },
+            StayField.Exit => s with { Exit = string.IsNullOrEmpty(v) ? null : v },
+            _ => s
+        };
+    }
+
+    private void ToggleHist(string h, bool on)
+    {
+        if (on) _hist[h] = _hist.GetValueOrDefault(h) ?? "";
+        else _hist.Remove(h);
+    }
+
+    private void SetHistDetail(string h, ChangeEventArgs e) => _hist[h] = e.Value?.ToString() ?? "";
+    private void SetExam(string key, ChangeEventArgs e) => _ex[key] = e.Value?.ToString() ?? "";
+    private void SetVt(string k, string? v) => _vt[k] = v ?? "";
+
+    private async Task SaveAsync()
+    {
+        _saving = true; _message = null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_consent))
+                throw new InvalidOperationException("حدّد الموافقة على تقديم الخدمات الطبية.");
+
+            if (!string.IsNullOrEmpty(Bmi)) _vt["BMI"] = Bmi;
+            var record = JsonSerializer.Serialize(new
+            {
+                f = new Dictionary<string, string>
+                {
+                    ["address"] = _address, ["relative"] = _relative, ["drugs"] = _drugs,
+                    ["allergies"] = _allergies, ["smoking"] = _smoking, ["general"] = _general,
+                    ["consent"] = _consent, ["organizer"] = _organizer,
+                    ["lmp"] = _lmp, ["pregnancy"] = _pregnancy, ["child"] = _child
+                },
+                hist = _hist, vt = _vt, ex = _ex, sg = new Dictionary<string, string>(), mk = new Dictionary<string, string>(),
+                attachments = _attachments.Select(a => new { name = a.Name, kind = a.Kind, url = a.Url, size = a.Size }).ToList()
+            });
+
+            await Ops.CreateInmateAsync(new CreateInmateRequest(
+                _no, _file, _nationality, _birthPlace, _birthDate, _blood, _sex, _marital,
+                _stays[^1].Place, _stays[^1].Entry,
+                string.Join(",", _hist.Keys),
+                string.IsNullOrWhiteSpace(_allergies) ? "—" : _allergies,
+                record, _stays.Where(s => !string.IsNullOrWhiteSpace(s.Place)).ToList()));
+
+            _error = false;
+            _message = $"تم تسجيل النزيل {_no} وفتح ملفه الطبي";
+            _file = _no = _blood = _birthPlace = _birthDate = _address = _relative = "";
+            _drugs = _allergies = _smoking = _general = _consent = _organizer = "";
+            _hist.Clear(); _vt.Clear(); _ex.Clear();
+            _attachments.Clear();
+            _stays = [new("حسيا", DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd"), null)];
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally { _saving = false; }
+    }
+}

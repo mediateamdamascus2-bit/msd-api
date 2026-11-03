@@ -1,0 +1,68 @@
+@page "/f/hasia"
+@page "/f/hasia/{View}"
+@layout HasiaLayout
+@attribute [Authorize]
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Services.Hasia
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Navigation
+
+<PageTitle>@_pageTitle</PageTitle>
+
+@if (_denied)
+{
+    <section class="placeholder-panel">
+        <h1>غير مصرح</h1>
+        <p class="lead">لا تملك صلاحية الوصول إلى واجهة سجن حسيا.</p>
+    </section>
+}
+else if (_nav is null || !_nav.Ready)
+{
+    <section class="harasta-panel">
+        <p class="eyebrow">COMING SOON</p>
+        <h1>@(_nav?.LabelAr ?? "قسم")</h1>
+        <p class="lead">هذا القسم سيُبنى لاحقاً.</p>
+        <a class="btn-enter" href="/f/hasia">العودة للرئيسية</a>
+    </section>
+}
+else if (_view == "overview") { <HasiaOverview /> }
+else if (_view == "structure") { <HasiaStructure /> }
+else if (_view == "intake") { <HasiaIntakeStats /> }
+else if (_view == "triage") { <HasiaTriageStats /> }
+else if (_view == "cases") { <HasiaCasesStats /> }
+else if (_view == "archive") { <HasiaArchive /> }
+else if (_view == "inmates") { <HasiaInmates /> }
+else if (_view == "ph-internal") { <HasiaPharmacyStats Pharmacy="internal" /> }
+else if (_view == "ph-external") { <HasiaPharmacyStats Pharmacy="external" /> }
+else if (_view == "fleet") { <HasiaFleet /> }
+
+@code {
+    [Parameter] public string? View { get; set; }
+
+    private string _view = "overview";
+    private HasiaNavItem? _nav;
+    private string _pageTitle = HasiaData.TitleAr;
+    private bool _denied;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+        var isAdmin = user.IsInRole(AppRoles.Admin);
+        var linked = user.FindFirst(AppClaimTypes.FacilityId)?.Value;
+        _denied = !(isAdmin || string.Equals(linked, HasiaData.FacilityId, StringComparison.OrdinalIgnoreCase));
+        if (_denied) return;
+
+        _view = string.IsNullOrWhiteSpace(View) ? "overview" : View.Trim().ToLowerInvariant();
+        _nav = HasiaData.Nav.FirstOrDefault(n => n.Key.Equals(_view, StringComparison.OrdinalIgnoreCase));
+        if (_nav is null)
+        {
+            Navigation.NavigateTo("/f/hasia", replace: true);
+            return;
+        }
+
+        _pageTitle = _nav.Key == "overview"
+            ? HasiaData.TitleAr
+            : $"{_nav.LabelAr} — {HasiaData.TitleAr}";
+    }
+}

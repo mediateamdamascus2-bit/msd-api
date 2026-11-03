@@ -1,0 +1,109 @@
+@page "/f/harasta"
+@page "/f/harasta/{View}"
+@layout FacilityLayout
+@attribute [Authorize]
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Services.Harasta
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Navigation
+
+<PageTitle>@_pageTitle</PageTitle>
+
+@if (_denied)
+{
+    <section class="placeholder-panel">
+        <h1>غير مصرح</h1>
+        <p class="lead">لا تملك صلاحية الوصول إلى واجهة مشفى حرستا.</p>
+    </section>
+}
+else if (_nav is null || !_nav.Ready)
+{
+    <section class="harasta-panel">
+        <p class="eyebrow">COMING SOON</p>
+        <h1>@(_nav?.LabelAr ?? "قسم")</h1>
+        <p class="lead">هذا القسم ضمن واجهة المشفى وسيُبنى في مرحلة لاحقة دون التأثير على الأقسام الجاهزة.</p>
+        <a class="btn-enter" href="/f/harasta">العودة للرئيسية</a>
+    </section>
+}
+else if (_view == "overview")
+{
+    <HarastaOverview />
+}
+else if (_view == "structure")
+{
+    <HarastaStructure />
+}
+else if (_view == "floors")
+{
+    <HarastaFloors />
+}
+else if (_view == "staff")
+{
+    <HarastaStaff />
+}
+else if (_view == "reception")
+{
+    <HarastaReceptionStats />
+}
+else if (_view == "clinics")
+{
+    <HarastaClinics />
+}
+else if (_view == "depts")
+{
+    <HarastaDepartments />
+}
+else if (_view == "files")
+{
+    <HarastaFiles />
+}
+else if (_view == "fleet")
+{
+    <HarastaFleet />
+}
+else if (_view == "stores")
+{
+    <HarastaStores />
+}
+else if (_view == "assets")
+{
+    <HarastaAssets />
+}
+else if (_view == "vision")
+{
+    <HarastaVision />
+}
+
+@code {
+    [Parameter]
+    public string? View { get; set; }
+
+    private string _view = "overview";
+    private HarastaNavItem? _nav;
+    private string _pageTitle = HarastaData.TitleAr;
+    private bool _denied;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+        var isAdmin = user.IsInRole(AppRoles.Admin);
+        var linked = user.FindFirst(AppClaimTypes.FacilityId)?.Value;
+        _denied = !(isAdmin || string.Equals(linked, HarastaData.FacilityId, StringComparison.OrdinalIgnoreCase));
+        if (_denied) return;
+
+        _view = string.IsNullOrWhiteSpace(View) ? "overview" : View.Trim().ToLowerInvariant();
+        _nav = HarastaData.Nav.FirstOrDefault(n => n.Key.Equals(_view, StringComparison.OrdinalIgnoreCase));
+
+        if (_nav is null)
+        {
+            Navigation.NavigateTo("/f/harasta", replace: true);
+            return;
+        }
+
+        _pageTitle = _nav.Key == "overview"
+            ? HarastaData.TitleAr
+            : $"{_nav.LabelAr} — {HarastaData.TitleAr}";
+    }
+}

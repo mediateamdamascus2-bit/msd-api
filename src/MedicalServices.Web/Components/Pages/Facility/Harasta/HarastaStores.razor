@@ -1,0 +1,282 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IStoreService Stores
+@inject AuthenticationStateProvider AuthState
+
+<section class="harasta-stack">
+    <div class="ops-grid">
+        <article class="ops-card"><span>المستودعات</span><strong>@HarastaData.StoreSections.Count</strong><em>قسم</em></article>
+        <article class="ops-card"><span>الأصناف</span><strong>@_list.Count</strong><em>مسجّل</em></article>
+        <article class="ops-card"><span>تحت الحد الأدنى</span><strong>@LowCount</strong><em>تنبيه</em></article>
+        <article class="ops-card"><span>تنتهي خلال 90 يوماً</span><strong>@ExpiringSoonCount</strong><em>صلاحية</em></article>
+    </div>
+
+    <div class="harasta-panel">
+        <div class="queue-head">
+            <div>
+                <p class="eyebrow">WAREHOUSES</p>
+                <h1>مستودعات المشفى</h1>
+            </div>
+            <div class="chip-row" style="margin:0">
+                <button type="button" class="chip @(_onlyLow ? "on" : null)" style="@(_onlyLow ? "background:#cf5a52;color:#fff" : null)" @onclick="() => _onlyLow = !_onlyLow">النواقص فقط (@LowCount)</button>
+            </div>
+        </div>
+
+        <input class="input" style="margin-bottom:0.75rem;max-width:20rem" @bind="_query" @bind:event="oninput" placeholder="بحث عن صنف..." />
+
+        <div class="chip-row" style="margin-bottom:0.85rem">
+            <button type="button" class="chip @(_storeFilter == "الكل" ? "on" : null)" @onclick='() => _storeFilter = "الكل"'>الكل</button>
+            @foreach (var s in HarastaData.StoreSections)
+            {
+                <button type="button" class="chip @(_storeFilter == s ? "on" : null)" @onclick="() => _storeFilter = s">@s</button>
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <div class="@(_error ? "login-error" : "save-ok")" style="margin-bottom:0.85rem">@_message</div>
+        }
+
+        @if (_loading)
+        {
+            <p class="muted">جاري التحميل...</p>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <p class="muted" style="text-align:center;padding:1.5rem 0">لا توجد أصناف — أضف صنفاً أدناه</p>
+        }
+        else
+        {
+            <div class="store-list">
+                @foreach (var item in Filtered)
+                {
+                    var isLow = item.Quantity < item.MinQuantity;
+                    var soon = IsExpiringSoon(item.ExpiryDate);
+                    var pct = item.MinQuantity <= 0
+                        ? 100
+                        : Math.Min(100, (int)Math.Round(item.Quantity / (item.MinQuantity * 2.0) * 100));
+                    <article class="store-row @(isLow ? "low" : null)">
+                        <div class="store-row-main">
+                            <strong>@item.Name</strong>
+                            <span class="muted">@item.StoreName</span>
+                        </div>
+                        <div class="store-qty">
+                            <b class="@(isLow ? "danger" : null)">@item.Quantity</b>
+                            <span class="muted">@item.Unit · حد @item.MinQuantity</span>
+                        </div>
+                        <div class="store-bar"><span style="width:@pct%" class="@(isLow ? "bad" : pct < 70 ? "mid" : "ok")"></span></div>
+                        <div class="store-expiry @(soon ? "warn" : null)">
+                            @(item.ExpiryDate.HasValue ? $"صلاحية {item.ExpiryDate:yyyy-MM-dd}" : "—")
+                        </div>
+                        @if (_adjustId == item.Id)
+                        {
+                            <div class="store-adjust">
+                                <input class="input" type="number" min="1" @bind="_adjustQty" />
+                                <button type="button" class="btn-enter compact" disabled="@_busyIds.Contains(item.Id)" @onclick="() => ConfirmAdjustAsync(item)">تأكيد</button>
+                                <button type="button" class="chip" @onclick="CancelAdjust">إلغاء</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="store-actions">
+                                <button type="button" class="chip green" disabled="@_busyIds.Contains(item.Id)" @onclick="() => BeginAdjust(item, +1)">+ وارد</button>
+                                <button type="button" class="chip blue" disabled="@_busyIds.Contains(item.Id)" @onclick="() => BeginAdjust(item, -1)">− صادر</button>
+                            </div>
+                        }
+                    </article>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="harasta-panel">
+        <p class="eyebrow">ADD ITEM</p>
+        <h2>إضافة صنف</h2>
+        <div class="admissions-form" style="margin-top:0.85rem">
+            <div class="field">
+                <label>المستودع</label>
+                <select class="input" @bind="_newStore">
+                    @foreach (var s in HarastaData.StoreSections)
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
+            </div>
+            <div class="field">
+                <label>اسم الصنف</label>
+                <input class="input" @bind="_newName" placeholder="مثال: باراسيتامول 500 ملغ" />
+            </div>
+            <div class="field">
+                <label>الوحدة</label>
+                <input class="input" @bind="_newUnit" placeholder="علبة / أمبولة / قطعة" />
+            </div>
+            <div class="field">
+                <label>الكمية الابتدائية</label>
+                <input class="input" type="number" min="0" @bind="_newQty" />
+            </div>
+            <div class="field">
+                <label>الحد الأدنى</label>
+                <input class="input" type="number" min="0" @bind="_newMin" />
+            </div>
+            <div class="field">
+                <label>تاريخ الصلاحية (اختياري)</label>
+                <NiceDatePicker Value="@(_newExpiry?.ToString("yyyy-MM-dd") ?? "")" ValueChanged="OnExpiryChanged" Placeholder="اختياري" />
+            </div>
+        </div>
+        <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@_saving" @onclick="AddAsync">
+            @(_saving ? "جاري الحفظ..." : "حفظ الصنف")
+        </button>
+    </div>
+</section>
+
+@code {
+    private List<StoreItem> _list = [];
+    private string _storeFilter = "الكل";
+    private string _query = string.Empty;
+    private bool _onlyLow;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _error;
+    private string? _message;
+    private readonly HashSet<Guid> _busyIds = [];
+
+    private Guid? _adjustId;
+    private int _adjustSign = 1;
+    private int _adjustQty = 1;
+
+    private string _newStore = HarastaData.StoreSections[0];
+    private string _newName = string.Empty;
+    private string _newUnit = string.Empty;
+    private int _newQty;
+    private int _newMin;
+    private DateTime? _newExpiry;
+
+    private Task OnExpiryChanged(string v)
+    {
+        _newExpiry = string.IsNullOrWhiteSpace(v)
+            ? null
+            : DateTime.ParseExact(v, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        return Task.CompletedTask;
+    }
+
+    private int LowCount => _list.Count(x => x.Quantity < x.MinQuantity);
+    private int ExpiringSoonCount => _list.Count(x => IsExpiringSoon(x.ExpiryDate));
+
+    private IReadOnlyList<StoreItem> Filtered
+    {
+        get
+        {
+            IEnumerable<StoreItem> q = _list;
+            if (_storeFilter != "الكل")
+                q = q.Where(x => x.StoreName == _storeFilter);
+            if (_onlyLow)
+                q = q.Where(x => x.Quantity < x.MinQuantity);
+            var term = _query.Trim();
+            if (!string.IsNullOrEmpty(term))
+                q = q.Where(x => x.Name.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                 || x.StoreName.Contains(term, StringComparison.OrdinalIgnoreCase));
+            return q.ToList();
+        }
+    }
+
+    private static bool IsExpiringSoon(DateOnly? expiry) =>
+        expiry.HasValue && expiry.Value.ToDateTime(TimeOnly.MinValue) < DateTime.Today.AddDays(90);
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _list = (await Stores.ListAsync(HarastaData.FacilityId)).ToList();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task<string> UserAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        return state.User.Identity?.Name ?? "unknown";
+    }
+
+    private async Task AddAsync()
+    {
+        _saving = true;
+        _message = null;
+        try
+        {
+            DateOnly? expiry = _newExpiry.HasValue ? DateOnly.FromDateTime(_newExpiry.Value) : null;
+            await Stores.AddAsync(
+                HarastaData.FacilityId,
+                new AddStoreItemRequest(_newStore, _newName, _newUnit, _newQty, _newMin, expiry),
+                await UserAsync());
+            _error = false;
+            _message = "تم إضافة الصنف.";
+            _newName = _newUnit = string.Empty;
+            _newQty = _newMin = 0;
+            _newExpiry = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void BeginAdjust(StoreItem item, int sign)
+    {
+        _adjustId = item.Id;
+        _adjustSign = sign;
+        _adjustQty = 1;
+        _message = null;
+    }
+
+    private void CancelAdjust()
+    {
+        _adjustId = null;
+        _adjustQty = 1;
+    }
+
+    private async Task ConfirmAdjustAsync(StoreItem item)
+    {
+        if (_adjustQty <= 0)
+        {
+            _error = true;
+            _message = "أدخل كمية أكبر من صفر.";
+            return;
+        }
+
+        _busyIds.Add(item.Id);
+        _message = null;
+        try
+        {
+            var delta = _adjustSign * _adjustQty;
+            await Stores.AdjustQuantityAsync(HarastaData.FacilityId, item.Id, delta, await UserAsync());
+            _error = false;
+            _message = delta > 0
+                ? $"وارد +{_adjustQty} لـ {item.Name}."
+                : $"صادر −{_adjustQty} من {item.Name}.";
+            CancelAdjust();
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busyIds.Remove(item.Id);
+        }
+    }
+}

@@ -1,0 +1,36 @@
+@if (!string.IsNullOrWhiteSpace(Message))
+{
+    <div class="alert-dialog-backdrop" role="presentation" @onclick="Dismiss">
+        <div class="alert-dialog @(IsError ? "err" : "ok")"
+             role="alertdialog"
+             aria-modal="true"
+             aria-labelledby="@_titleId"
+             aria-describedby="@_bodyId"
+             @onclick:stopPropagation="true">
+            <div class="alert-dialog-icon" aria-hidden="true">@(IsError ? "!" : "✓")</div>
+            <h3 id="@_titleId">@(IsError ? "تنبيه" : "تم بنجاح")</h3>
+            <p id="@_bodyId">@Message</p>
+            <button type="button" class="alert-dialog-btn" @onclick="Dismiss" @ref="_okBtn">حسناً</button>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly string _titleId = $"ad-t-{Guid.NewGuid():N}"[..12];
+    private readonly string _bodyId = $"ad-b-{Guid.NewGuid():N}"[..12];
+    private ElementReference _okBtn;
+
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public bool IsError { get; set; }
+    [Parameter] public EventCallback OnDismiss { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!string.IsNullOrWhiteSpace(Message))
+        {
+            try { await _okBtn.FocusAsync(); } catch { /* ignore */ }
+        }
+    }
+
+    private Task Dismiss() => OnDismiss.InvokeAsync();
+}

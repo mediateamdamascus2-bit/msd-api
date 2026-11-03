@@ -1,0 +1,152 @@
+@using System.Globalization
+
+<div class="msd-select msd-date @(_open ? "is-open" : null)">
+    @if (_open)
+    {
+        <button type="button" class="msd-select-backdrop" aria-label="إغلاق" @onclick="Close"></button>
+    }
+    <button type="button" class="msd-select-trigger input @CssClass" aria-haspopup="dialog" aria-expanded="@_open" @onclick="Toggle" title="@Title">
+        <span class="msd-select-value @(string.IsNullOrEmpty(Value) ? "is-placeholder" : null)" dir="rtl">@Label</span>
+        <span class="msd-select-chevron" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+        </span>
+    </button>
+    @if (_open)
+    {
+        <div class="msd-date-menu msd-date-menu-abs">
+            <div class="msd-month-head">
+                <button type="button" class="msd-month-nav" disabled="@(!CanPrev)" @onclick="PrevMonth" aria-label="الشهر السابق">‹</button>
+                <strong>@MonthTitle</strong>
+                <button type="button" class="msd-month-nav" disabled="@(!CanNext)" @onclick="NextMonth" aria-label="الشهر التالي">›</button>
+            </div>
+            <div class="msd-date-cal" dir="rtl">
+                @foreach (var w in WeekLabels)
+                {
+                    <span class="msd-date-weekday">@w</span>
+                }
+                @foreach (var cell in BuildCells())
+                {
+                    if (cell is null)
+                    {
+                        <span class="msd-date-cell is-empty"></span>
+                    }
+                    else
+                    {
+                        var d = cell.Value;
+                        var iso = Iso(d);
+                        var on = string.Equals(Value, iso, StringComparison.Ordinal);
+                        var dis = IsDisabled(d);
+                        var today = iso == Iso(DateTime.Today);
+                        <button type="button"
+                                class="msd-date-cell @(on ? "is-active" : null) @(dis ? "is-disabled" : null) @(today && !on ? "is-today" : null)"
+                                disabled="@dis"
+                                @onclick="() => PickAsync(d)">
+                            <span class="mono" lang="en" dir="ltr">@ArLatnCulture.ToLatnDigits(d.Day.ToString(CultureInfo.InvariantCulture))</span>
+                        </button>
+                    }
+                }
+            </div>
+            <div class="msd-date-foot">
+                @if (AllowClear)
+                {
+                    <button type="button" class="msd-month-link" @onclick="ClearAsync">محو</button>
+                }
+                else
+                {
+                    <span></span>
+                }
+                <button type="button" class="msd-month-link" disabled="@IsDisabled(DateTime.Today)" @onclick="TodayAsync">اليوم</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string? Max { get; set; }
+    [Parameter] public string? Min { get; set; }
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "اختر التاريخ";
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public bool AllowClear { get; set; } = true;
+
+    private bool _open;
+    private DateTime _view = DateTime.Today;
+
+    private static readonly string[] WeekLabels = ["س", "ح", "ن", "ث", "ر", "خ", "ج"];
+
+    private string Label
+    {
+        get
+        {
+            if (!TryParse(Value, out var d)) return Placeholder;
+            return ArLatnCulture.Format(d, "d MMMM yyyy");
+        }
+    }
+
+    private string MonthTitle => ArLatnCulture.Format(_view, "MMMM yyyy");
+    private bool CanPrev => string.IsNullOrEmpty(Min) || new DateTime(_view.Year, _view.Month, 1) > FirstOf(ParseBound(Min!));
+    private bool CanNext => string.IsNullOrEmpty(Max) || new DateTime(_view.Year, _view.Month, 1) < FirstOf(ParseBound(Max!));
+
+    private static bool TryParse(string? iso, out DateTime d)
+    {
+        d = default;
+        return DateTime.TryParseExact(iso, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d);
+    }
+
+    private static string Iso(DateTime d) => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    private static DateTime FirstOf(DateTime d) => new(d.Year, d.Month, 1);
+    private static DateTime ParseBound(string iso) =>
+        TryParse(iso, out var d) ? d : DateTime.Today;
+
+    private bool IsDisabled(DateTime d)
+    {
+        var iso = Iso(d);
+        if (!string.IsNullOrEmpty(Max) && string.CompareOrdinal(iso, Max) > 0) return true;
+        if (!string.IsNullOrEmpty(Min) && string.CompareOrdinal(iso, Min) < 0) return true;
+        return false;
+    }
+
+    private IEnumerable<DateTime?> BuildCells()
+    {
+        var first = new DateTime(_view.Year, _view.Month, 1);
+        var pad = ((int)first.DayOfWeek + 1) % 7; // start Saturday
+        var days = DateTime.DaysInMonth(_view.Year, _view.Month);
+        for (var i = 0; i < pad; i++) yield return null;
+        for (var d = 1; d <= days; d++) yield return new DateTime(_view.Year, _view.Month, d);
+        var total = pad + days;
+        while (total++ % 7 != 0) yield return null;
+    }
+
+    private void Toggle()
+    {
+        _open = !_open;
+        if (_open) _view = TryParse(Value, out var d) ? d : DateTime.Today;
+    }
+
+    private void Close() => _open = false;
+    private void PrevMonth() { if (CanPrev) _view = _view.AddMonths(-1); }
+    private void NextMonth() { if (CanNext) _view = _view.AddMonths(1); }
+
+    private async Task PickAsync(DateTime d)
+    {
+        if (IsDisabled(d)) return;
+        _open = false;
+        await ValueChanged.InvokeAsync(Iso(d));
+    }
+
+    private async Task TodayAsync()
+    {
+        if (IsDisabled(DateTime.Today)) return;
+        await PickAsync(DateTime.Today);
+    }
+
+    private async Task ClearAsync()
+    {
+        _open = false;
+        await ValueChanged.InvokeAsync("");
+    }
+}

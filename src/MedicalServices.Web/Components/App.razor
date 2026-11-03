@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ar-SY-u-nu-latn" dir="rtl" data-numbers="latn">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["MedicalServices.Web.styles.css"]" />
+    <ImportMap />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+    <script>
+        (function () {
+            // أرقام لاتينية في حقول التاريخ الأصلية (تقويم المتصفح يتبع lang)
+            function forceLatinDateInputs(root) {
+                (root || document).querySelectorAll('input[type="date"],input[type="month"],input[type="time"],input[type="datetime-local"],input[type="week"],input[type="number"]').forEach(function (el) {
+                    if (el.lang !== 'en') el.lang = 'en';
+                    if (el.type !== 'number' && el.dir !== 'ltr') el.dir = 'ltr';
+                });
+            }
+            forceLatinDateInputs();
+            new MutationObserver(function () { forceLatinDateInputs(); }).observe(document.documentElement, { childList: true, subtree: true });
+
+            const digitAr = { '0': 'صفر', '1': 'واحد', '2': 'اثنان', '3': 'ثلاثة', '4': 'أربعة', '5': 'خمسة', '6': 'ستة', '7': 'سبعة', '8': 'ثمانية', '9': 'تسعة' };
+            const letterAr = {
+                A: 'إي', B: 'بي', C: 'سي', D: 'دي', E: 'إي', F: 'إف', G: 'جي', H: 'إتش',
+                I: 'آي', J: 'جيه', K: 'كي', L: 'إل', M: 'إم', N: 'إن', O: 'أو', P: 'بي',
+                Q: 'كيو', R: 'آر', S: 'إس', T: 'تي', U: 'يو', V: 'في', W: 'دبليو', X: 'إكس', Y: 'واي', Z: 'زد'
+            };
+
+            function expandCode(code) {
+                if (!code) return '';
+                return String(code).toUpperCase().split('').map(ch => {
+                    if (ch === '-' || ch === ' ' || ch === '_') return '،';
+                    if (digitAr[ch]) return digitAr[ch];
+                    if (letterAr[ch]) return letterAr[ch];
+                    return ch;
+                }).join(' ');
+            }
+
+            function pickArabicVoice() {
+                const voices = window.speechSynthesis.getVoices() || [];
+                return voices.find(v => /^ar(-|$)/i.test(v.lang))
+                    || voices.find(v => /arabic|عربي/i.test(v.name))
+                    || null;
+            }
+
+            function speakArabic(text) {
+                if (!window.speechSynthesis || !text) return;
+                const run = () => {
+                    const u = new SpeechSynthesisUtterance(text);
+                    u.lang = 'ar-SA';
+                    u.rate = 0.92;
+                    const voice = pickArabicVoice();
+                    if (voice) {
+                        u.voice = voice;
+                        u.lang = voice.lang || 'ar-SA';
+                    }
+                    speechSynthesis.cancel();
+                    speechSynthesis.speak(u);
+                };
+                if ((speechSynthesis.getVoices() || []).length === 0) {
+                    speechSynthesis.addEventListener('voiceschanged', run, { once: true });
+                    // Fallback if voiceschanged never fires.
+                    setTimeout(run, 250);
+                } else {
+                    run();
+                }
+            }
+
+            window.msdSpeakCall = function (payload) {
+                try {
+                    if (typeof payload === 'string') {
+                        speakArabic(payload);
+                        return;
+                    }
+                    const name = (payload && payload.name) || '';
+                    const dest = (payload && payload.destination) || '';
+                    const codeSpoken = expandCode(payload && payload.code);
+                    const text = codeSpoken
+                        ? `${name}، رقم الإضبارة ${codeSpoken}، يرجى التوجه إلى ${dest}`
+                        : `${name}، يرجى التوجه إلى ${dest}`;
+                    speakArabic(text);
+                } catch (_) { /* ignore */ }
+            };
+        })();
+    </script>
+</body>
+
+</html>

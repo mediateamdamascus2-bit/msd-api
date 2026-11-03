@@ -1,0 +1,75 @@
+@inherits LayoutComponentBase
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@inject NavigationManager Navigation
+
+<div class="admin-shell">
+    <aside class="admin-rail">
+        <div class="admin-rail-brand">
+            <img src="images/logo.png" alt="" width="40" height="40" />
+            <div>
+                <div class="admin-rail-title">مركز القيادة</div>
+                <div class="admin-rail-sub">لوحة الإدارة</div>
+            </div>
+        </div>
+
+        <nav class="admin-nav" aria-label="قائمة الإدارة">
+            @foreach (var item in AdminNav.Items)
+            {
+                var active = IsActive(item.Path);
+                if (item.Ready)
+                {
+                    <a class="admin-nav-item @(active ? "active" : null)" href="@item.Path">@item.LabelAr</a>
+                }
+                else
+                {
+                    <a class="admin-nav-item soon @(active ? "active" : null)" href="@item.Path">
+                        <span>@item.LabelAr</span>
+                        <em>قريباً</em>
+                    </a>
+                }
+            }
+        </nav>
+    </aside>
+
+    <div class="admin-body">
+        <header class="admin-top">
+            <div class="admin-top-brand">
+                <img src="images/logo.png" alt="شعار إدارة الخدمات الطبية" width="36" height="36" />
+                <div>
+                    <div class="shell-title">إدارة الخدمات الطبية</div>
+                    <div class="shell-subtitle" dir="ltr">MEDICAL SERVICES DIRECTORATE</div>
+                </div>
+            </div>
+            <div class="shell-actions">
+                <AuthorizeView Roles="@AppRoles.Admin">
+                    <Authorized>
+                        <span class="shell-user">@context.User.FindFirst(System.Security.Claims.ClaimTypes.GivenName)?.Value</span>
+                        <span class="role-pill">ADMIN</span>
+                        <a class="btn-outline" href="/auth/logout" data-enhance-nav="false">تسجيل الخروج</a>
+                    </Authorized>
+                </AuthorizeView>
+            </div>
+        </header>
+
+        <main class="admin-main">
+            @Body
+        </main>
+    </div>
+</div>
+
+@code {
+    private bool IsActive(string path)
+    {
+        var relative = Navigation.ToBaseRelativePath(Navigation.Uri).TrimEnd('/');
+        var target = path.TrimStart('/').TrimEnd('/');
+        if (string.IsNullOrEmpty(target))
+            return string.IsNullOrEmpty(relative) || relative.Equals("admin", StringComparison.OrdinalIgnoreCase);
+
+        if (target.Equals("admin", StringComparison.OrdinalIgnoreCase))
+            return relative.Equals("admin", StringComparison.OrdinalIgnoreCase);
+
+        return relative.Equals(target, StringComparison.OrdinalIgnoreCase)
+               || relative.StartsWith(target + "/", StringComparison.OrdinalIgnoreCase);
+    }
+}

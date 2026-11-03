@@ -1,0 +1,224 @@
+@page "/login"
+@layout EmptyLayout
+@attribute [AllowAnonymous]
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Hasia
+@using MedicalServices.Web.Services.Harasta
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IConfiguration Config
+
+<PageTitle>تسجيل الدخول — إدارة الخدمات الطبية</PageTitle>
+
+<div class="login-scene">
+    <div class="login-orb" aria-hidden="true"></div>
+
+    <div class="login-card login-card-wide">
+        <div class="login-brand">
+            <img src="images/logo.png" alt="شعار إدارة الخدمات الطبية" class="login-logo" />
+            <h1>مرحباً بعودتك!</h1>
+            <p>سجّل دخولك للوصول إلى مركز القيادة</p>
+            <div class="login-brand-en" dir="ltr">MEDICAL SERVICES DIRECTORATE</div>
+        </div>
+
+        @if (_showLocked)
+        {
+            <div class="login-error" role="alert">تم تجاوز عدد المحاولات أو قُفل الحساب مؤقتاً. حاول لاحقاً.</div>
+        }
+        else if (_showError)
+        {
+            <div class="login-error" role="alert">اسم المستخدم أو كلمة المرور غير صحيحة.</div>
+        }
+
+        <form method="post" action="/auth/login" class="login-form" data-enhance="false" data-enhance-nav="false">
+            <input type="hidden" name="ReturnUrl" value="@(ReturnUrl ?? string.Empty)" />
+
+            <div class="field">
+                <label for="username">اسم المستخدم</label>
+                <input id="username" name="Username" class="input" placeholder="اسم المستخدم" autocomplete="username" required @bind="_username" @bind:event="oninput" />
+            </div>
+
+            <div class="field">
+                <label for="password">كلمة المرور</label>
+                <div class="input-row password-row">
+                    <input id="password" name="Password" type="@(_showPassword ? "text" : "password")" class="input" placeholder="كلمة المرور" autocomplete="current-password" required @bind="_password" @bind:event="oninput" />
+                    <button type="button" class="eye-btn" @onclick="() => _showPassword = !_showPassword"
+                            aria-label="@(_showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور")"
+                            title="@(_showPassword ? "إخفاء" : "إظهار")">
+                        @if (_showPassword)
+                        {
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M3 3l18 18" />
+                                <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
+                                <path d="M9.9 5.1A9.8 9.8 0 0 1 12 5c5 0 9.3 3.1 11 7.5a12.3 12.3 0 0 1-2.2 3.4" />
+                                <path d="M6.1 6.1A12.4 12.4 0 0 0 1 12.5C2.7 16.9 7 20 12 20a9.8 9.8 0 0 0 4.1-.9" />
+                            </svg>
+                        }
+                        else
+                        {
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M1 12.5C2.7 8.1 7 5 12 5s9.3 3.1 11 7.5c-1.7 4.4-6 7.5-11 7.5S2.7 16.9 1 12.5z" />
+                                <circle cx="12" cy="12.5" r="3" />
+                            </svg>
+                        }
+                    </button>
+                </div>
+            </div>
+
+            <div class="login-row">
+                <label class="remember">
+                    <input type="checkbox" name="RememberMe" value="true" />
+                    <span>تذكرني</span>
+                </label>
+                <span class="muted">نسيت كلمة المرور؟</span>
+            </div>
+
+            <button type="submit" class="btn-primary">تسجيل الدخول</button>
+        </form>
+
+        @if (_showDemoLogins)
+        {
+            <div class="login-divider">
+                <span>حسابات تجريبية — اختر المنشأة ثم الحساب</span>
+            </div>
+
+            <div class="demo-facilities" role="list">
+                @foreach (var g in _groups)
+                {
+                    var open = _openGroup == g.Key;
+                    <div class="demo-facility @(open ? "open" : null)" role="listitem">
+                        <button type="button" class="demo-facility-head" @onclick="() => ToggleGroup(g.Key)" aria-expanded="@open">
+                            <span class="demo-facility-meta">
+                                <strong>@g.Title</strong>
+                                <em>@g.Hint</em>
+                            </span>
+                            <span class="demo-facility-count mono" lang="en">@g.Accounts.Count</span>
+                            <span class="demo-facility-chevron" aria-hidden="true">@(open ? "▾" : "◂")</span>
+                        </button>
+                        @if (open)
+                        {
+                            <div class="demo-facility-body">
+                                @if (g.Accounts.Count <= 6)
+                                {
+                                    <div class="demo-grid">
+                                        @foreach (var a in g.Accounts)
+                                        {
+                                            <button type="button" class="demo-btn" @onclick="() => FillDemo(a.User)">
+                                                <strong>@a.Label</strong>
+                                                <span>@a.User / 1234</span>
+                                            </button>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="demo-grid demo-grid-clinics">
+                                        @foreach (var a in g.Accounts)
+                                        {
+                                            <button type="button" class="demo-btn" @onclick="() => FillDemo(a.User)">
+                                                <strong>@a.Label</strong>
+                                                <span>@a.User / 1234</span>
+                                            </button>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        <div class="login-secure">
+            <span class="dot"></span>
+            اتصال آمن عبر الشبكة الداخلية
+        </div>
+    </div>
+</div>
+
+@code {
+    private sealed record DemoAccount(string User, string Label);
+    private sealed record DemoGroup(string Key, string Title, string Hint, IReadOnlyList<DemoAccount> Accounts);
+
+    private static readonly IReadOnlyList<DemoGroup> _groups =
+    [
+        new("admin", "الإدارة المركزية", "لوحة القيادة العامة",
+        [
+            new("admin", "مدير الخدمات الطبية"),
+        ]),
+        new("harasta", "مشفى حرستا", "المسؤول والمحطات التابعة",
+        [
+            new("harasta", "مدير المشفى"),
+            new("reception", "محطة الاستقبال"),
+            new("booking", "حجز الإدارات"),
+            new("clinic-live", "إحصائيات العيادات"),
+            new("display", "شاشة الاستدعاء"),
+            new("dept-lab", "محطة المخبر"),
+            new("dept-pharmacy", "محطة صيدلية المشفى"),
+            ..HarastaStationAccounts.Clinics.Select(c =>
+                new DemoAccount(c.UserName, c.Clinic == "الإسعاف" ? "الإسعاف" : $"عيادة {c.Clinic}")),
+        ]),
+        new("hasia", "سجن حسيا", "المسؤول الطبي ومحطات العمل",
+        [
+            new("hasia", "المسؤول الطبي (إحصائيات)"),
+            ..HasiaStationAccounts.Stations.Select(s => new DemoAccount(s.UserName, s.LabelAr)),
+        ]),
+        new("units", "نقاط طبية", "واجهات الوحدات الميدانية",
+        [
+            new("unit-homs", "نقطة طبية حمص"),
+        ]),
+    ];
+
+    private string _username = string.Empty;
+    private string _password = string.Empty;
+    private bool _showPassword;
+    private bool _showError;
+    private bool _showLocked;
+    private bool _showDemoLogins;
+    private string? _openGroup = "hasia";
+
+    [SupplyParameterFromQuery]
+    public string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? Error { get; set; }
+
+    [SupplyParameterFromQuery(Name = "locked")]
+    public string? Locked { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _showDemoLogins = Config.GetValue("Deployment:ShowDemoLogins", false);
+        _showLocked = Locked == "1";
+        _showError = !_showLocked && Error == "1";
+
+        var state = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated == true)
+        {
+            var home = state.User.FindFirst(AppClaimTypes.HomePath)?.Value;
+            if (string.IsNullOrWhiteSpace(home))
+            {
+                if (state.User.IsInRole(MedicalServices.Domain.Enums.AppRoles.Admin))
+                    home = "/admin";
+                else
+                {
+                    var facilityId = state.User.FindFirst(AppClaimTypes.FacilityId)?.Value;
+                    home = string.IsNullOrWhiteSpace(facilityId) ? "/login" : $"/f/{facilityId}";
+                }
+            }
+
+            Navigation.NavigateTo(LoginRouting.ToLocationHeader(home), forceLoad: true, replace: true);
+        }
+    }
+
+    private void ToggleGroup(string key) =>
+        _openGroup = _openGroup == key ? null : key;
+
+    private void FillDemo(string username)
+    {
+        _username = username;
+        _password = "1234";
+        _showError = false;
+    }
+}

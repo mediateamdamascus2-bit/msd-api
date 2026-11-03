@@ -1,0 +1,30 @@
+@page "/admin/section/{SectionKey}"
+@layout AdminLayout
+@attribute [Authorize(Roles = AppRoles.Admin)]
+@using MedicalServices.Web.Services
+
+<PageTitle>@_title</PageTitle>
+
+<section class="admin-block">
+    <p class="eyebrow">COMING SOON</p>
+    <h1>@_title</h1>
+    <p class="lead">
+        هذا القسم ضمن هيكل لوحة الإدارة وسيُبنى في مرحلة لاحقة.
+        المرحلة الحالية تركز على قشرة الإدارة ودخول واجهات المواقع.
+    </p>
+    <a class="btn-enter" href="/admin">العودة للرئيسية</a>
+</section>
+
+@code {
+    [Parameter]
+    public string SectionKey { get; set; } = string.Empty;
+
+    private string _title = "قسم قيد البناء";
+
+    protected override void OnParametersSet()
+    {
+        var item = AdminNav.Items.FirstOrDefault(i =>
+            i.Path.EndsWith("/" + SectionKey, StringComparison.OrdinalIgnoreCase));
+        _title = item?.LabelAr ?? "قسم قيد البناء";
+    }
+}

@@ -1,0 +1,197 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services
+@inject IUnitOpsService Ops
+@inject AuthenticationStateProvider AuthState
+
+<section class="harasta-stack">
+    <div class="harasta-panel">
+        <p class="eyebrow">NEEDS</p>
+        <h1>الاحتياجات</h1>
+        <p class="lead">طلب مستلزمات أو كوادر أو صيانة للوحدة، ومتابعة الحالة.</p>
+
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <div class="@(_error ? "login-error" : "save-ok")" style="margin-top:0.85rem">@_message</div>
+        }
+
+        <div class="admissions-form" style="margin-top:1rem">
+            <div class="field" style="grid-column:1 / -1">
+                <label>وصف الاحتياج</label>
+                <input class="input" @bind="_title" placeholder="مثال: نقص أمبولات إسعاف" />
+            </div>
+            <div class="field">
+                <label>الفئة</label>
+                <NiceSelect @bind-Value="_category" Options="_categoryOpts" />
+            </div>
+            <div class="field">
+                <label>الأولوية</label>
+                <NiceSelect @bind-Value="_priority" Options="_priorityOpts" />
+            </div>
+            <div class="field">
+                <label>الكمية</label>
+                <input class="input" type="number" min="1" @bind="_quantity" />
+            </div>
+            <div class="field" style="grid-column:1 / -1">
+                <label>ملاحظات</label>
+                <input class="input" @bind="_notes" placeholder="اختياري" />
+            </div>
+        </div>
+
+        <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@_saving" @onclick="CreateAsync">
+            @(_saving ? "جاري الإرسال..." : "إرسال طلب احتياج")
+        </button>
+    </div>
+
+    <div class="harasta-panel">
+        <div class="queue-head">
+            <div>
+                <p class="eyebrow">REQUESTS</p>
+                <h2>طلبات الاحتياج</h2>
+            </div>
+            <div class="chip-row">
+                <button type="button" class="chip @(_openOnly ? "on" : null)" @onclick="() => SetFilter(true)">النشطة</button>
+                <button type="button" class="chip @(!_openOnly ? "on" : null)" @onclick="() => SetFilter(false)">الكل</button>
+            </div>
+        </div>
+
+        @if (_loading)
+        {
+            <p class="muted">جاري التحميل...</p>
+        }
+        else if (_rows.Count == 0)
+        {
+            <div class="rx-empty-state">
+                <strong>لا طلبات</strong>
+                <span>أرسل أول احتياج من النموذج أعلاه.</span>
+            </div>
+        }
+        else
+        {
+            <div class="queue-list">
+                @foreach (var row in _rows)
+                {
+                    <article class="queue-card">
+                        <div class="queue-card-main">
+                            <strong>@row.Title</strong>
+                            <span class="muted">@row.Category · @row.Priority · كمية @row.Quantity · @row.CreatedAt.ToLocalTime().ToString("g")</span>
+                            @if (!string.IsNullOrWhiteSpace(row.Notes))
+                            {
+                                <span class="muted">@row.Notes</span>
+                            }
+                            <span class="status-pill">@row.Status</span>
+                        </div>
+                        @if (row.Status is "مفتوح" or "قيد التنفيذ")
+                        {
+                            <div class="booking-arrive-actions" style="margin-top:0.65rem">
+                                @if (row.Status == "مفتوح")
+                                {
+                                    <button type="button" class="chip" disabled="@_busyIds.Contains(row.Id)" @onclick='() => SetStatusAsync(row, "قيد التنفيذ")'>بدء التنفيذ</button>
+                                }
+                                <button type="button" class="btn-enter compact" disabled="@_busyIds.Contains(row.Id)" @onclick='() => SetStatusAsync(row, "مُلبّى")'>تم التلبية</button>
+                                <button type="button" class="chip" disabled="@_busyIds.Contains(row.Id)" @onclick='() => SetStatusAsync(row, "ملغى")'>إلغاء</button>
+                            </div>
+                        }
+                    </article>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string FacilityId { get; set; } = string.Empty;
+
+    private static readonly NiceSelect.Opt[] _categoryOpts =
+        UnitOpsCatalog.NeedCategories.Select(c => new NiceSelect.Opt(c, c)).ToArray();
+    private static readonly NiceSelect.Opt[] _priorityOpts =
+        UnitOpsCatalog.NeedPriorities.Select(p => new NiceSelect.Opt(p, p)).ToArray();
+    private List<FacilityNeed> _rows = [];
+    private string _title = string.Empty;
+    private string _category = UnitOpsCatalog.NeedCategories[0];
+    private string _priority = UnitOpsCatalog.NeedPriorities[0];
+    private int _quantity = 1;
+    private string _notes = string.Empty;
+    private bool _openOnly = true;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _error;
+    private string? _message;
+    private readonly HashSet<Guid> _busyIds = [];
+
+    protected override async Task OnParametersSetAsync() => await ReloadAsync();
+
+    private async Task SetFilter(bool openOnly)
+    {
+        _openOnly = openOnly;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _rows = (await Ops.ListNeedsAsync(FacilityId, _openOnly)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = "تعذر تحميل الاحتياجات: " + ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        _saving = true;
+        _message = null;
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            await Ops.CreateNeedAsync(
+                FacilityId,
+                new CreateFacilityNeedRequest(_title, _category, _priority, _quantity, _notes),
+                state.User.Identity?.Name ?? "unknown");
+            _title = string.Empty;
+            _notes = string.Empty;
+            _quantity = 1;
+            _error = false;
+            _message = "تم إرسال طلب الاحتياج.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task SetStatusAsync(FacilityNeed row, string status)
+    {
+        _busyIds.Add(row.Id);
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            await Ops.UpdateNeedStatusAsync(FacilityId, row.Id, status, state.User.Identity?.Name ?? "unknown");
+            _error = false;
+            _message = $"تم تحديث الحالة إلى «{status}».";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busyIds.Remove(row.Id);
+        }
+    }
+}

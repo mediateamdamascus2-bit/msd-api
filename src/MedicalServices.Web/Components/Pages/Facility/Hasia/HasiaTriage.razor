@@ -1,0 +1,135 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+@inject NavigationManager Navigation
+
+<section class="hasia-page hasia-two-col">
+    <div class="harasta-panel">
+        <header class="hasia-page-head compact">
+            <div class="hasia-page-head-icon sm" aria-hidden="true">◷</div>
+            <div class="hasia-page-head-text">
+                <p class="eyebrow">TRIAGE</p>
+                <h1>الفرز</h1>
+                <p class="lead">الفارز يدخل اسمه والشكاية فقط، ثم يرافق المريض إلى القسم المحدد.</p>
+            </div>
+        </header>
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <div class="@(_error ? "login-error" : "save-ok")" style="margin-top:0.75rem">@_message</div>
+        }
+        <div class="admissions-form" style="margin-top:1rem">
+            <div class="field" style="grid-column:1 / -1"><label>1 · اسم الفارز</label><input class="input" @bind="_triager" placeholder="مثال: م. رامي" /></div>
+            <div class="field" style="grid-column:1 / -1">
+                <label>2 · رقم النزيل</label>
+                <input class="input mono" list="tri-inmates" @bind="_inmate" @bind:after="OnInmateChanged" />
+                <datalist id="tri-inmates">@foreach (var i in _inmates) { <option value="@i.InmateNo">@i.FileNo</option> }</datalist>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_inmate))
+            {
+                <div style="grid-column:1 / -1" class="@(_who is null ? "login-error" : "save-ok")">
+                    @(_who is null ? "رقم غير مسجّل" : $"نزيل مسجّل · ملف {_who.FileNo} · تحسس: {_who.Allergies}")
+                </div>
+            }
+            <div class="field" style="grid-column:1 / -1">
+                <label>3 · الشكاية</label>
+                <textarea class="input" rows="3" @bind="_complaint" placeholder="ماذا يشكو المريض؟"></textarea>
+            </div>
+        </div>
+
+        <label style="display:block;margin:1rem 0 0.5rem;font-weight:700">4 · التحويل إلى</label>
+        <div class="hasia-seg">
+            <button type="button" class="@(_zone == "point" ? "on" : null)" @onclick='() => SetZone("point")'>النقطة الداخلية</button>
+            <button type="button" class="@(_zone == "hospital" ? "on" : null)" @onclick='() => SetZone("hospital")'>المشفى</button>
+        </div>
+        <div class="hasia-svc-grid" style="margin-top:0.75rem">
+            @foreach (var d in HasiaData.Services.Where(x => x.Zone == _zone && !x.Id.EndsWith("-ph")))
+            {
+                <button type="button" class="hasia-svc-card @(_to == d.Id ? "selected" : null)" @onclick="() => _to = d.Id">
+                    <div><strong>@d.Name</strong></div>
+                </button>
+            }
+        </div>
+        <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@_saving" @onclick="OpenAsync">
+            فتح الحالة والتحويل إلى @(HasiaData.FindService(_to)?.Name ?? _to)
+        </button>
+    </div>
+
+    <div class="harasta-panel">
+        <div class="hasia-section-title">
+            <h2>بانتظار الاستلام</h2>
+            <span class="hasia-badge">@_waiting.Count</span>
+        </div>
+        @if (_waiting.Count == 0)
+        {
+            <div class="hasia-empty">لا يوجد مرضى بالانتظار</div>
+        }
+        else
+        {
+            @foreach (var c in _waiting)
+            {
+                var s = HasiaData.FindService(c.AtServiceId);
+                <div class="queue-card" style="margin-top:0.5rem">
+                    <div class="queue-card-main">
+                        <strong class="mono">#@c.InmateNo</strong>
+                        <span class="chip">@(s is null ? c.AtServiceId : $"{HasiaData.ZoneLabel(s.Zone)} · {s.Name}")</span>
+                        <span class="mono muted">@c.OpenedTime</span>
+                        <p style="margin:0.35rem 0 0">@c.Complaint</p>
+                    </div>
+                </div>
+            }
+        }
+        <a class="btn-enter" style="margin-top:1rem;display:inline-flex" href="/f/hasia/cases">فتح واجهة الحالات</a>
+    </div>
+</section>
+
+@code {
+    private string _triager = "", _inmate = "", _complaint = "", _to = "p-er", _zone = "point";
+    private string? _message;
+    private bool _error, _saving;
+    private PrisonInmate? _who;
+    private List<PrisonInmate> _inmates = [];
+    private List<PrisonCase> _waiting = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _inmates = (await Ops.ListInmatesAsync()).ToList();
+        await RefreshWaiting();
+    }
+
+    private async Task OnInmateChanged()
+    {
+        _who = string.IsNullOrWhiteSpace(_inmate) ? null : await Ops.FindInmateAsync(_inmate.Trim());
+    }
+
+    private void SetZone(string z)
+    {
+        _zone = z;
+        _to = z == "point" ? "p-er" : "h-er";
+    }
+
+    private async Task RefreshWaiting()
+    {
+        var cases = await Ops.ListCasesAsync("جارية");
+        _waiting = cases.Where(c => c.Steps.Count == 0).ToList();
+    }
+
+    private async Task OpenAsync()
+    {
+        _saving = true; _message = null;
+        try
+        {
+            var row = await Ops.OpenTriageCaseAsync(new OpenTriageRequest(_triager, _inmate, _complaint, _to));
+            _error = false;
+            _message = $"فُتحت الحالة {row.CaseCode} — المريض مُرافَق إلى {HasiaData.FindService(_to)?.Name}";
+            _inmate = _complaint = "";
+            _who = null;
+            await RefreshWaiting();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally { _saving = false; }
+    }
+}

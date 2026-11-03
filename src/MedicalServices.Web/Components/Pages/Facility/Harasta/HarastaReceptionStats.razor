@@ -1,0 +1,283 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IHarastaHomeStatsService HomeStats
+@inject IReceptionService Reception
+@inject IBookingService Bookings
+@implements IDisposable
+
+<section class="harasta-stack sv-clinics sv-reception">
+    @{
+        var atRx = _queue.Count;
+        var pendingToday = _pending.Count(b => b.AppointmentDate == DateOnly.FromDateTime(DateTime.Today));
+        var finding = atRx == 0 && pendingToday == 0
+            ? "الاستقبال هادئ حالياً — لا حجوزات بانتظار الحضور ولا حالات للتوجيه."
+            : atRx >= 3
+                ? $"{atRx} حالات بالاستقبال بانتظار التوجيه · راقب الضغط قبل أن يطول الانتظار."
+                : pendingToday > 0
+                    ? $"{pendingToday} حجزاً بانتظار الحضور · {atRx} بالاستقبال الآن."
+                    : $"{atRx} بالاستقبال بانتظار التوجيه.";
+    }
+
+    <header class="sv-hero">
+        <div class="sv-hero-copy">
+            <p class="sv-role">متابعة المسؤول · بدون إدخال</p>
+            <h1>لوحة متابعة الاستقبال</h1>
+            <p class="sv-lead">@finding</p>
+            <p class="sv-note">فتح الإضبارة وتسجيل الوصول والتوجيه يتمّان من محطة الاستقبال المستقلة.</p>
+        </div>
+        <div class="sv-hero-actions">
+            <button type="button" class="sv-btn ghost" disabled="@_busy" @onclick="RefreshAllAsync">تحديث الآن</button>
+            <a class="sv-btn soft" href="/stations/harasta/reception" data-enhance-nav="false">محطة الاستقبال</a>
+        </div>
+    </header>
+
+    <div class="sv-kpis sv-kpis-6" aria-label="مؤشرات الاستقبال">
+        <article class="sv-kpi">
+            <span>دخلوا اليوم</span>
+            <strong>@_snap.EnteredToday</strong>
+            <small>أضابير فُتحت</small>
+        </article>
+        <article class="sv-kpi accent">
+            <span>وُجّهوا اليوم</span>
+            <strong>@_snap.DirectedToday</strong>
+            <small>إلى عيادة أو قسم</small>
+        </article>
+        <article class="sv-kpi @(_snap.AtReceptionNow >= 3 ? "alert" : null)">
+            <span>بالاستقبال الآن</span>
+            <strong>@_snap.AtReceptionNow</strong>
+            <small>بانتظار التوجيه</small>
+        </article>
+        <article class="sv-kpi @(_snap.PendingBookings > 0 ? "alert" : "calm")">
+            <span>حجوزات بانتظار الحضور</span>
+            <strong>@_snap.PendingBookings</strong>
+            <small>لم يُسجَّل وصولها</small>
+        </article>
+        <article class="sv-kpi">
+            <span>إسعافي اليوم</span>
+            <strong>@_snap.EmergencyToday</strong>
+            <small>تحويل مباشر</small>
+        </article>
+        <article class="sv-kpi">
+            <span>أُعيد للاستقبال</span>
+            <strong>@_snap.ReturnedToday</strong>
+            <small>اليوم</small>
+        </article>
+    </div>
+
+    <div class="sv-filters">
+        <button type="button" class="sv-chip @(_panel == "queue" ? "on" : null)" @onclick='() => _panel = "queue"'>طابور الاستقبال</button>
+        <button type="button" class="sv-chip @(_panel == "bookings" ? "on" : null)" @onclick='() => _panel = "bookings"'>حجوزات بانتظار الحضور</button>
+        <button type="button" class="sv-chip @(_panel == "dest" ? "on" : null)" @onclick='() => _panel = "dest"'>وجهات التوجيه</button>
+    </div>
+
+    <div class="sv-layout">
+        <section class="sv-board harasta-panel">
+            <div class="sv-section-head">
+                <div>
+                    <p class="sv-label">متابعة حية</p>
+                    <h2>
+                        @(_panel == "bookings" ? "حجوزات بانتظار الحضور"
+                            : _panel == "dest" ? "إلى أين وُجّه مراجعو اليوم؟"
+                            : "الحالات بالاستقبال الآن")
+                    </h2>
+                </div>
+                <span class="sv-refresh">يتحدّث كل 30 ثانية</span>
+            </div>
+
+            @if (_loading)
+            {
+                <p class="sv-muted">جاري التحميل...</p>
+            }
+            else if (_panel == "bookings")
+            {
+                @if (_pending.Count == 0)
+                {
+                    <div class="sv-empty compact">
+                        <strong>لا حجوزات بانتظار الحضور</strong>
+                        <p>عند وصول مراجع محجوز يظهر هنا للمسؤول — التسجيل من محطة الاستقبال.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="sv-queue">
+                        @foreach (var (b, i) in _pending.Select((x, i) => (x, i)))
+                        {
+                            var isToday = b.AppointmentDate == DateOnly.FromDateTime(DateTime.Today);
+                            <article class="sv-patient">
+                                <div class="sv-patient-rank">@(i + 1)</div>
+                                <div class="sv-patient-main">
+                                    <strong>@b.PatientName</strong>
+                                    <span>@b.Code · عيادة @b.Clinic · @(b.NationalId ?? "بدون هوية")</span>
+                                </div>
+                                <div class="sv-patient-meta">
+                                    <em class="sv-status">@(isToday ? "موعد اليوم" : "موعد لاحق")</em>
+                                    <span>@b.AppointmentDate.ToString("yyyy-MM-dd") · @b.Slot</span>
+                                    @if (!string.IsNullOrWhiteSpace(b.SpecialType))
+                                    {
+                                        <span>@b.SpecialType</span>
+                                    }
+                                </div>
+                            </article>
+                        }
+                    </div>
+                }
+            }
+            else if (_panel == "dest")
+            {
+                @if (_snap.Destinations.Count == 0)
+                {
+                    <div class="sv-empty compact">
+                        <strong>لا توجيهات بعد اليوم</strong>
+                        <p>عند تحويل الحالات من محطة الاستقبال تظهر الوجهات هنا.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="sv-dest">
+                        @foreach (var d in _snap.Destinations)
+                        {
+                            <article class="sv-dest-row">
+                                <div class="sv-dest-copy">
+                                    <strong>@(d.Destination == "الإسعاف" ? d.Destination : $"عيادة {d.Destination}")</strong>
+                                    <span>@d.Count مراجعاً · @d.Percent%</span>
+                                </div>
+                                <div class="sv-bar" aria-hidden="true">
+                                    <span style="width:@d.Percent.ToString(System.Globalization.CultureInfo.InvariantCulture)%"></span>
+                                </div>
+                                <em class="sv-dest-n">@d.Count</em>
+                            </article>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                @if (_queue.Count == 0)
+                {
+                    <div class="sv-empty compact">
+                        <strong>لا حالات بالاستقبال</strong>
+                        <p>الطابور فارغ حالياً.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="sv-queue">
+                        @foreach (var (item, i) in _queue.Select((x, i) => (x, i)))
+                        {
+                            var waitMin = (int)Math.Max(0, (DateTimeOffset.UtcNow - item.OpenedAt).TotalMinutes);
+                            <article class="sv-patient">
+                                <div class="sv-patient-rank">@(i + 1)</div>
+                                <div class="sv-patient-main">
+                                    <strong>@item.PatientName</strong>
+                                    <span>@item.CaseNumber · @(item.Age?.ToString() ?? "—") سنة · @item.EntryType</span>
+                                </div>
+                                <div class="sv-patient-meta">
+                                    <em class="sv-status">@PatientCaseStatusLabels.ToArabic(item.Status)</em>
+                                    <span>@(waitMin < 60 ? $"{waitMin} د" : $"{waitMin / 60} س") منذ الفتح</span>
+                                    @if (!string.IsNullOrWhiteSpace(item.BookedClinic))
+                                    {
+                                        <span>محجوز: @item.BookedClinic</span>
+                                    }
+                                </div>
+                            </article>
+                        }
+                    </div>
+                }
+            }
+        </section>
+
+        <aside class="sv-detail harasta-panel">
+            <div class="sv-detail-head">
+                <div>
+                    <p class="sv-label">ملخص اليوم</p>
+                    <h2>تقييم الاستقبال</h2>
+                </div>
+                <strong class="sv-queue-n">@_snap.DirectedToday</strong>
+            </div>
+
+            <div class="sv-eval">
+                <article>
+                    <span>وصول من حجز</span>
+                    <strong>@_snap.BookingArrivalsToday</strong>
+                </article>
+                <article>
+                    <span>بالاستقبال الآن</span>
+                    <strong>@_snap.AtReceptionNow</strong>
+                </article>
+                <article>
+                    <span>حجوزات معلّقة</span>
+                    <strong>@_snap.PendingBookings</strong>
+                </article>
+                <article>
+                    <span>ضغط الطابور</span>
+                    <strong>@(atRx >= 5 ? "حرج" : atRx >= 3 ? "مرتفع" : atRx > 0 ? "متوسط" : "مستقر")</strong>
+                </article>
+            </div>
+
+            <div class="sv-station-hint">
+                <span>للإدخال والتوجيه:</span>
+                <a href="/stations/harasta/reception" data-enhance-nav="false">فتح محطة الاستقبال</a>
+            </div>
+        </aside>
+    </div>
+</section>
+
+@code {
+    private ReceptionDaySnapshot _snap = Empty;
+    private List<PatientCase> _queue = [];
+    private List<AppointmentBooking> _pending = [];
+    private string _panel = "queue";
+    private bool _busy;
+    private bool _loading;
+    private System.Threading.Timer? _timer;
+
+    private static ReceptionDaySnapshot Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, []);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAllAsync();
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await RefreshAllAsync();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private async Task RefreshAllAsync()
+    {
+        _busy = true;
+        _loading = true;
+        try
+        {
+            try { _snap = await HomeStats.GetReceptionDayAsync(HarastaData.FacilityId); }
+            catch { /* keep last */ }
+
+            try
+            {
+                _queue = (await Reception.GetQueueAsync(HarastaData.FacilityId)).ToList();
+            }
+            catch { _queue = []; }
+
+            try
+            {
+                _pending = (await Bookings.ListPendingReservedAsync(HarastaData.FacilityId))
+                    .OrderBy(b => b.AppointmentDate)
+                    .ThenBy(b => b.Slot)
+                    .ToList();
+            }
+            catch { _pending = []; }
+        }
+        finally
+        {
+            _loading = false;
+            _busy = false;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

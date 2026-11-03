@@ -1,0 +1,715 @@
+@page "/stations/harasta/booking"
+@layout EmptyLayout
+@attribute [Authorize(Roles = "Admin,BookingClerk")]
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@inject IBookingService Bookings
+
+<PageTitle>حجز المواعيد — الإدارات</PageTitle>
+
+<div class="station-shell harasta-skin">
+    <header class="station-top">
+        <div>
+            <p class="eyebrow light">محطة · حجز</p>
+            <h1>حجز المواعيد — الإدارات</h1>
+            <p class="station-sub">واجهة مستقلة لجهات الحجز · مشفى الشرطة في حرستا</p>
+        </div>
+        <div class="station-top-meta">
+            <span class="mono">/stations/harasta/booking</span>
+            <a class="btn-outline" href="/auth/logout" data-enhance-nav="false">خروج</a>
+        </div>
+    </header>
+
+    <section class="station-bar harasta-panel">
+        <div class="field" style="grid-column:1 / -1">
+            <label>الجهة</label>
+            <div class="chip-row" style="margin:0">
+                @foreach (var e in BookingCatalog.Entities)
+                {
+                    <button type="button" class="chip @(_entity == e ? "on" : null)" @onclick="() => SelectEntity(e)">@e</button>
+                }
+            </div>
+        </div>
+        @if (BookingCatalog.RequiresAdminUnit(_entity))
+        {
+            <div class="field">
+                <label>@BookingCatalog.AdminFieldLabel(_entity)</label>
+                @if (_entity == BookingCatalog.EntityInterior)
+                {
+                    <NiceSelect @bind-Value="_admin" Options="_adminOpts" Placeholder="اختر الإدارة..." />
+                }
+                else
+                {
+                    <input class="input" @bind="_admin" placeholder="@BookingCatalog.AdminFieldPlaceholder(_entity)" />
+                }
+            </div>
+        }
+        else if (_entity == BookingCatalog.EntityCivilian)
+        {
+            <div class="field">
+                <label>الجهة</label>
+                <input class="input" value="مدني — بدون جهة تابعة" disabled />
+            </div>
+        }
+        <div class="field">
+            <label>الموظف المسؤول</label>
+            <input class="input" @bind="_bookedBy" placeholder="اسم الموظف" />
+        </div>
+        <div class="bk-mode-switch" role="tablist" aria-label="أقسام الحجز">
+            <button type="button" class="bk-mode @(_tab == "new" ? "active" : null)" @onclick='() => _tab = "new"'>
+                <span class="bk-mode-icon" aria-hidden="true">＋</span>
+                <span class="bk-mode-text">
+                    <strong>حجز جديد</strong>
+                    <em>تعبئة استمارة وموعد</em>
+                </span>
+            </button>
+            <button type="button" class="bk-mode prior @(_tab == "prior" ? "active" : null)" @onclick="ShowPriorAsync">
+                <span class="bk-mode-icon" aria-hidden="true">◎</span>
+                <span class="bk-mode-text">
+                    <strong>أشخاص حُجز لهم مسبقاً</strong>
+                    <em>بحث وإعادة حجز بدون إعادة كتابة الاستمارة</em>
+                </span>
+                <span class="bk-mode-badge">سجل</span>
+            </button>
+            <button type="button" class="bk-mode @(_tab == "list" ? "active" : null)" @onclick="ShowListAsync">
+                <span class="bk-mode-icon" aria-hidden="true">☰</span>
+                <span class="bk-mode-text">
+                    <strong>حجوزات الإدارة</strong>
+                    <em>@_list.Count حجز ظاهر</em>
+                </span>
+            </button>
+        </div>
+    </section>
+
+    <AlertDialog Message="@_message" IsError="@_error" OnDismiss="DismissMessage" />
+
+    @if (_tab == "new")
+    {
+        <section class="reception-layout station-body">
+            <div class="harasta-panel">
+                <p class="eyebrow">STEP 1</p>
+                <h2>العيادة المستهدفة</h2>
+                <input class="input" style="margin:0.75rem 0" @bind="_clinicQ" @bind:event="oninput" placeholder="بحث عن عيادة..." />
+                <div class="clinic-pick-grid">
+                    @foreach (var c in FilteredClinics)
+                    {
+                        var rem = _availability.GetValueOrDefault(c, BookingCatalog.DailyCap);
+                        <button type="button" class="clinic-pick @(_clinic == c ? "active" : null)" @onclick="() => SelectClinic(c)">
+                            <strong>@c</strong>
+                            <span class="@(rem <= 3 ? "warn" : null)">متاح @rem من @BookingCatalog.DailyCap</span>
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <div class="harasta-panel">
+                <p class="eyebrow">STEP 2</p>
+                <h2>الموعد</h2>
+                <div class="day-strip">
+                    @foreach (var d in _days)
+                    {
+                        var fri = d.DayOfWeek == DayOfWeek.Friday;
+                        var rem = _clinicAvailabilityByDay.GetValueOrDefault(d, BookingCatalog.DailyCap);
+                        <button type="button" class="day-chip @(_date == d ? "active" : null)" disabled="@fri" @onclick="() => SelectDateAsync(d)">
+                            <span>@MedicalServices.Web.Services.ArLatnCulture.ToLatnDigits(d.ToString("ddd", ArLatn))</span>
+                            <strong>@d.Day</strong>
+                            <em>@(fri ? "عطلة" : $"{rem} متاح")</em>
+                        </button>
+                    }
+                </div>
+                <div class="slot-grid">
+                    @foreach (var s in BookingCatalog.Slots)
+                    {
+                        <button type="button" class="slot-chip @(_slot == s ? "active" : null)" @onclick='() => _slot = s'>@s</button>
+                    }
+                </div>
+                <p class="muted" style="margin-top:0.75rem">
+                    المتبقي في العيادة: <strong class="@(_left <= 3 ? "text-danger" : null)">@_left</strong>
+                </p>
+            </div>
+        </section>
+
+        <section class="harasta-panel station-body">
+            <div class="queue-head">
+                <div>
+                    <p class="eyebrow">STEP 3</p>
+                    <h2>الأشخاص المراد حجزهم</h2>
+                    <p class="muted" style="margin:0.25rem 0 0">ابحث برقم وطني أو اسم لتعبئة الاستمارة من حجز سابق — دون إعادة الكتابة</p>
+                </div>
+                <div class="count-ctrl">
+                    <button type="button" class="icon-btn" @onclick="() => SetCount(_people.Count - 1)">−</button>
+                    <span class="mono">@_people.Count</span>
+                    <button type="button" class="icon-btn" @onclick="() => SetCount(_people.Count + 1)">+</button>
+                </div>
+            </div>
+
+            <div class="bk-prior-inline">
+                <input class="input" @bind="_quickSearch" @bind:event="oninput" @bind:after="QuickSearchAsync"
+                       placeholder="بحث سريع: رقم وطني أو اسم لإضافة شخص سابق..." />
+                @if (_searching)
+                {
+                    <span class="muted">جاري البحث...</span>
+                }
+                else if (_quickHits.Count > 0)
+                {
+                    <div class="bk-prior-hits">
+                        @foreach (var hit in _quickHits)
+                        {
+                            <button type="button" class="bk-prior-hit" @onclick="() => UsePrior(hit)">
+                                <strong>@hit.PatientName</strong>
+                                <span class="mono">@(hit.NationalId ?? "بدون هوية")</span>
+                                <em>@(hit.LastClinic is null ? "" : $"عيادة {hit.LastClinic}") · @hit.BookingCount مرة</em>
+                                <span class="chip on">استخدام</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="people-grid">
+                @for (var i = 0; i < _people.Count; i++)
+                {
+                    var idx = i;
+                    var p = _people[idx];
+                    <article class="person-card @(p.FromPrior ? "from-prior" : null)">
+                        <div class="person-card-head">
+                            <strong>الشخص @(idx + 1)@(p.FromPrior ? " · من سجل سابق" : "")</strong>
+                            <div class="chip-row" style="margin:0">
+                                <button type="button" class="chip @(p.Category == "عامة" ? "on" : null)" @onclick='() => SetPerson(idx, p with { Category = "عامة", FromPrior = false })'>عامة</button>
+                                <button type="button" class="chip amber @(p.Category == "خاصة" ? "on" : null)" @onclick='() => SetPerson(idx, p with { Category = "خاصة", FromPrior = false })'>خاصة</button>
+                                @if (_people.Count > 1)
+                                {
+                                    <button type="button" class="chip" @onclick="() => RemovePerson(idx)">حذف</button>
+                                }
+                            </div>
+                        </div>
+                        @if (p.Category == "خاصة")
+                        {
+                            <div class="chip-row">
+                                @foreach (var s in BookingCatalog.SpecialTypes)
+                                {
+                                    <button type="button" class="chip soft @(p.SpecialType == s ? "on" : null)" @onclick="() => SetPerson(idx, p with { SpecialType = s, FromPrior = false })">@s</button>
+                                }
+                            </div>
+                        }
+                        <div class="admissions-form">
+                            <div class="field" style="grid-column:1 / -1">
+                                <label>الاسم الثلاثي</label>
+                                <input class="input" value="@p.PatientName" placeholder="الاسم الأول · الأب · العائلة" @oninput="e => SetPerson(idx, p with { PatientName = e.Value?.ToString() ?? string.Empty, FromPrior = false })" />
+                            </div>
+                            <div class="field">
+                                <label>الرقم الوطني</label>
+                                <input class="input" disabled="@(p.Category == "خاصة" && p.SpecialType == "بدون هوية")" value="@p.NationalId"
+                                       @oninput="e => OnNationalIdInput(idx, p, e.Value?.ToString())" />
+                            </div>
+                            <div class="field">
+                                <label>العمر</label>
+                                <input class="input" type="number" value="@p.Age" @oninput="e => SetPerson(idx, p with { Age = ParseAge(e.Value?.ToString()), FromPrior = false })" />
+                            </div>
+                            <div class="field">
+                                <label>المحافظة</label>
+                                <NiceSelect Value="@p.Governorate"
+                                            ValueChanged="v => SetPerson(idx, p with { Governorate = v ?? p.Governorate, FromPrior = false })"
+                                            Options="_governorateOpts" />
+                            </div>
+                            <div class="field">
+                                <label>السكن</label>
+                                <input class="input" value="@p.Residence" @oninput="e => SetPerson(idx, p with { Residence = e.Value?.ToString(), FromPrior = false })" />
+                            </div>
+                        </div>
+                    </article>
+                }
+            </div>
+
+            <button type="button" class="btn-enter" style="margin-top:1rem" disabled="@(_saving || _left <= 0)" @onclick="SubmitAsync">
+                @(_saving ? "جاري الحجز..." : _left <= 0 ? "العيادة ممتلئة في هذا اليوم" : $"تأكيد حجز {_people.Count} — عيادة {_clinic}")
+            </button>
+
+            @if (_done.Count > 0)
+            {
+                <div class="save-ok" style="margin-top:0.85rem">
+                    <strong>تم الحجز — أبلغ المراجع برمز الحجز</strong>
+                    <ul style="margin:0.5rem 0 0;padding-inline-start:1.2rem">
+                        @foreach (var b in _done)
+                        {
+                            <li>@b.PatientName — <span class="mono">@b.Code · @b.Slot</span></li>
+                        }
+                    </ul>
+                </div>
+            }
+        </section>
+    }
+    else if (_tab == "prior")
+    {
+        <section class="bk-prior-desk station-body">
+            <div class="bk-prior-hero">
+                <div class="bk-prior-hero-copy">
+                    <p class="eyebrow light">سجل الأشخاص · إعادة الحجز السريع</p>
+                    <h2>أشخاص حُجز لهم مسبقاً</h2>
+                    <p>ابحث بالرقم الوطني أو الاسم، ثم اضغط «حجز مجدداً» لتعبئة الاستمارة تلقائياً دون إعادة الكتابة.</p>
+                </div>
+                <div class="bk-prior-hero-stats">
+                    <article>
+                        <span>نتائج البحث</span>
+                        <strong>@_priorResults.Count</strong>
+                    </article>
+                    <article>
+                        <span>الجهة الحالية</span>
+                        <strong class="sm">@_entity</strong>
+                    </article>
+                </div>
+            </div>
+
+            <div class="bk-prior-panel">
+                <div class="bk-prior-search-bar">
+                    <div class="bk-prior-search-field">
+                        <label>بحث في السجل</label>
+                        <input class="input" @bind="_priorSearch" @bind:event="oninput" @bind:after="SearchPriorAsync"
+                               placeholder="مثال: 01020304099 أو أحمد العبد الله" autocomplete="off" />
+                    </div>
+                    <button type="button" class="bk-prior-search-btn" disabled="@_searching" @onclick="SearchPriorAsync">
+                        @(_searching ? "جاري البحث..." : "بحث")
+                    </button>
+                </div>
+
+                @if (_searching)
+                {
+                    <div class="bk-prior-empty">
+                        <span class="bk-prior-spinner" aria-hidden="true"></span>
+                        <p>جاري البحث في الحجوزات السابقة...</p>
+                    </div>
+                }
+                else if (_priorResults.Count == 0)
+                {
+                    <div class="bk-prior-empty">
+                        <span class="bk-prior-empty-mark" aria-hidden="true">◎</span>
+                        <strong>
+                            @(string.IsNullOrWhiteSpace(_priorSearch) || _priorSearch.Trim().Length < 2
+                                ? "ابدأ البحث عن شخص سابق"
+                                : "لا توجد نتائج مطابقة")
+                        </strong>
+                        <p>
+                            @(string.IsNullOrWhiteSpace(_priorSearch) || _priorSearch.Trim().Length < 2
+                                ? "اكتب حرفين من الاسم أو 4 أرقام على الأقل من الرقم الوطني"
+                                : "جرّب جزءاً أقصر من الرقم أو تهجئة مختلفة للاسم")
+                        </p>
+                    </div>
+                }
+                else
+                {
+                    <div class="bk-prior-grid">
+                        @foreach (var p in _priorResults)
+                        {
+                            <article class="bk-prior-card">
+                                <div class="bk-prior-card-top">
+                                    <span class="bk-prior-avatar" aria-hidden="true">@Initials(p.PatientName)</span>
+                                    <div class="bk-prior-card-id">
+                                        <strong>@p.PatientName</strong>
+                                        <span class="mono">@(string.IsNullOrWhiteSpace(p.NationalId) ? "بدون هوية" : p.NationalId)</span>
+                                    </div>
+                                    <span class="bk-prior-count">@p.BookingCount حجز</span>
+                                </div>
+                                <div class="bk-prior-card-meta">
+                                    <span>@(p.Age?.ToString() ?? "—") سنة</span>
+                                    <span>@p.Governorate</span>
+                                    <span>@(string.IsNullOrWhiteSpace(p.LastClinic) ? "—" : $"عيادة {p.LastClinic}")</span>
+                                    @if (p.LastAppointmentDate is not null)
+                                    {
+                                        <span>آخر موعد @p.LastAppointmentDate.Value.ToString("yyyy-MM-dd")</span>
+                                    }
+                                </div>
+                                <button type="button" class="bk-prior-rebook" @onclick="() => RebookPrior(p)">
+                                    حجز مجدداً — تعبئة الاستمارة
+                                </button>
+                            </article>
+                        }
+                    </div>
+                }
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="harasta-panel station-body">
+            <p class="eyebrow">@_entity@(!string.IsNullOrWhiteSpace(_admin) ? " — " + _admin : "")</p>
+            <h2>حجوزات الإدارة</h2>
+            @if (_list.Count == 0)
+            {
+                <p class="muted" style="text-align:center;padding:2rem 0">لا توجد حجوزات لهذه الجهة</p>
+            }
+            else
+            {
+                <div class="booking-list">
+                    @foreach (var b in _list)
+                    {
+                        <article class="booking-row">
+                            <strong class="mono">@b.Code</strong>
+                            <span>@b.PatientName</span>
+                            <span>عيادة @b.Clinic</span>
+                            <span class="muted">@b.AppointmentDate.ToString("yyyy-MM-dd") · @b.Slot</span>
+                            <em class="status-pill">@BookingStatusLabels.ToArabic(b.Status)</em>
+                            <button type="button" class="chip on" @onclick="() => RebookFromBooking(b)">حجز مجدداً</button>
+                            @if (b.Status == BookingStatus.Reserved)
+                            {
+                                <button type="button" class="chip" @onclick="() => CancelAsync(b.Id)">إلغاء</button>
+                            }
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private static readonly System.Globalization.CultureInfo ArLatn = MedicalServices.Web.Services.ArLatnCulture.Instance;
+
+    private string _entity = BookingCatalog.Entities[0];
+    private static readonly NiceSelect.Opt[] _adminOpts =
+        new[] { new NiceSelect.Opt("", "اختر الإدارة...") }
+            .Concat(BookingCatalog.InteriorAdmins.Select(a => new NiceSelect.Opt(a, a)))
+            .ToArray();
+    private static readonly NiceSelect.Opt[] _governorateOpts =
+        BookingCatalog.Governorates.Select(g => new NiceSelect.Opt(g, g)).ToArray();
+    private string _admin = string.Empty;
+    private string _bookedBy = string.Empty;
+    private string _tab = "new";
+    private string _clinic = BookingCatalog.BookableClinics[0];
+    private string _clinicQ = string.Empty;
+    private DateOnly _date = NextOpenDay();
+    private string _slot = BookingCatalog.Slots[0];
+    private List<PersonDraft> _people = [PersonDraft.Blank()];
+    private Dictionary<string, int> _availability = new();
+    private Dictionary<DateOnly, int> _clinicAvailabilityByDay = new();
+    private List<DateOnly> _days = [];
+    private List<AppointmentBooking> _list = [];
+    private List<AppointmentBooking> _done = [];
+    private string _priorSearch = string.Empty;
+    private string _quickSearch = string.Empty;
+    private List<BookingPatientProfile> _priorResults = [];
+    private List<BookingPatientProfile> _quickHits = [];
+    private bool _searching;
+    private bool _saving;
+    private bool _error;
+    private string? _message;
+    private CancellationTokenSource? _searchCts;
+
+    private int _left => _availability.GetValueOrDefault(_clinic, BookingCatalog.DailyCap);
+
+    private IEnumerable<string> FilteredClinics =>
+        string.IsNullOrWhiteSpace(_clinicQ)
+            ? BookingCatalog.BookableClinics
+            : BookingCatalog.BookableClinics.Where(c => c.Contains(_clinicQ.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        _days = Enumerable.Range(0, 14).Select(i => DateOnly.FromDateTime(DateTime.Today.AddDays(i))).ToList();
+        await RefreshAvailabilityAsync();
+    }
+
+    private static DateOnly NextOpenDay()
+    {
+        // Default to today so reception can see new bookings during testing.
+        var d = DateOnly.FromDateTime(DateTime.Today);
+        if (d.DayOfWeek == DayOfWeek.Friday) d = d.AddDays(1);
+        return d;
+    }
+
+    private async Task RefreshAvailabilityAsync()
+    {
+        _availability = (await Bookings.GetDayAvailabilityAsync(BookingCatalog.DefaultFacilityId, _date)).ToDictionary(x => x.Key, x => x.Value);
+        _clinicAvailabilityByDay = new Dictionary<DateOnly, int>();
+        foreach (var d in _days.Where(x => x.DayOfWeek != DayOfWeek.Friday).Take(7))
+        {
+            var map = await Bookings.GetDayAvailabilityAsync(BookingCatalog.DefaultFacilityId, d);
+            _clinicAvailabilityByDay[d] = map.GetValueOrDefault(_clinic, BookingCatalog.DailyCap);
+        }
+    }
+
+    private void SelectEntity(string e)
+    {
+        _entity = e;
+        _admin = string.Empty;
+        _message = null;
+    }
+
+    private async Task SelectClinic(string c)
+    {
+        _clinic = c;
+        await RefreshAvailabilityAsync();
+    }
+
+    private async Task SelectDateAsync(DateOnly d)
+    {
+        _date = d;
+        await RefreshAvailabilityAsync();
+    }
+
+    private void SetCount(int n)
+    {
+        n = Math.Clamp(n, 1, Math.Max(1, _left));
+        if (n > _people.Count)
+            _people.AddRange(Enumerable.Range(0, n - _people.Count).Select(_ => PersonDraft.Blank()));
+        else
+            _people = _people.Take(n).ToList();
+    }
+
+    private void SetPerson(int i, PersonDraft p)
+    {
+        _people[i] = p;
+        _message = null;
+    }
+
+    private void RemovePerson(int i)
+    {
+        if (_people.Count <= 1) return;
+        _people.RemoveAt(i);
+    }
+
+    private async Task OnNationalIdInput(int idx, PersonDraft current, string? raw)
+    {
+        var id = Digits(raw);
+        SetPerson(idx, current with { NationalId = id, FromPrior = false });
+        if (id.Length != 11) return;
+
+        try
+        {
+            var hits = await Bookings.SearchPatientsAsync(
+                BookingCatalog.DefaultFacilityId, id, _entity,
+                BookingCatalog.RequiresAdminUnit(_entity) ? _admin : null);
+            var match = hits.FirstOrDefault(x => x.NationalId == id);
+            if (match is null) return;
+            SetPerson(idx, FromProfile(match));
+            _error = false;
+            _message = $"تم تعبئة بيانات {match.PatientName} من حجز سابق.";
+        }
+        catch
+        {
+            // Optional lookup — ignore failures while typing.
+        }
+    }
+
+    private async Task ShowPriorAsync()
+    {
+        _tab = "prior";
+        _message = null;
+        if (_priorSearch.Trim().Length >= 2)
+            await SearchPriorAsync();
+    }
+
+    private async Task SearchPriorAsync()
+    {
+        _searchCts?.Cancel();
+        _searchCts = new CancellationTokenSource();
+        var token = _searchCts.Token;
+        _searching = true;
+        try
+        {
+            await Task.Delay(220, token);
+            _priorResults = (await Bookings.SearchPatientsAsync(
+                BookingCatalog.DefaultFacilityId,
+                _priorSearch,
+                _entity,
+                BookingCatalog.RequiresAdminUnit(_entity) ? _admin : null,
+                token)).ToList();
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+            _priorResults = [];
+        }
+        finally
+        {
+            _searching = false;
+        }
+    }
+
+    private async Task QuickSearchAsync()
+    {
+        _searchCts?.Cancel();
+        _searchCts = new CancellationTokenSource();
+        var token = _searchCts.Token;
+        if (_quickSearch.Trim().Length < 2)
+        {
+            _quickHits = [];
+            return;
+        }
+
+        _searching = true;
+        try
+        {
+            await Task.Delay(220, token);
+            _quickHits = (await Bookings.SearchPatientsAsync(
+                BookingCatalog.DefaultFacilityId,
+                _quickSearch,
+                _entity,
+                BookingCatalog.RequiresAdminUnit(_entity) ? _admin : null,
+                token)).ToList();
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+        catch
+        {
+            _quickHits = [];
+        }
+        finally
+        {
+            _searching = false;
+        }
+    }
+
+    private void UsePrior(BookingPatientProfile profile)
+    {
+        // Fill first empty card, or append a new person.
+        var emptyIdx = _people.FindIndex(p => string.IsNullOrWhiteSpace(p.PatientName) && string.IsNullOrWhiteSpace(p.NationalId));
+        if (emptyIdx >= 0)
+            SetPerson(emptyIdx, FromProfile(profile));
+        else if (_people.Count < Math.Max(1, _left))
+        {
+            _people.Add(FromProfile(profile));
+        }
+        else
+            SetPerson(0, FromProfile(profile));
+
+        _quickSearch = string.Empty;
+        _quickHits = [];
+        _error = false;
+        _message = $"تم إدراج {profile.PatientName} من السجل السابق — أكمل العيادة والموعد فقط.";
+        _tab = "new";
+    }
+
+    private void RebookPrior(BookingPatientProfile profile)
+    {
+        _people = [FromProfile(profile)];
+        _quickHits = [];
+        _error = false;
+        _message = $"تم تعبئة استمارة {profile.PatientName}. اختر العيادة والموعد ثم أكّد الحجز.";
+        _tab = "new";
+    }
+
+    private void RebookFromBooking(AppointmentBooking b)
+    {
+        RebookPrior(new BookingPatientProfile(
+            b.PatientName, b.NationalId, b.Age, b.Governorate, b.Residence,
+            b.Category, b.SpecialType, b.Clinic, b.AppointmentDate, 1));
+    }
+
+    private static PersonDraft FromProfile(BookingPatientProfile p) =>
+        new(p.PatientName, p.NationalId ?? "", p.Age, p.Governorate, p.Residence,
+            string.IsNullOrWhiteSpace(p.Category) ? "عامة" : p.Category,
+            p.SpecialType ?? BookingCatalog.SpecialTypes[0],
+            FromPrior: true);
+
+    private async Task ShowListAsync()
+    {
+        _tab = "list";
+        _message = null;
+        try
+        {
+            _list = (await Bookings.ListAsync(BookingCatalog.DefaultFacilityId, _entity, _admin)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _saving = true;
+        _message = null;
+        _done = [];
+        try
+        {
+            var created = await Bookings.CreateAsync(
+                BookingCatalog.DefaultFacilityId,
+                new CreateBookingsRequest(
+                    _entity,
+                    _admin,
+                    _clinic,
+                    _date,
+                    _slot,
+                    _bookedBy,
+                    _people.Select(p => new BookingPersonRequest(
+                        p.PatientName,
+                        p.NationalId,
+                        p.Age,
+                        p.Governorate,
+                        p.Residence,
+                        p.Category,
+                        p.SpecialType)).ToList()));
+
+            _done = created.ToList();
+            _people = [PersonDraft.Blank()];
+            _error = false;
+            _message = $"تم تأكيد {_done.Count} حجز.";
+            await RefreshAvailabilityAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CancelAsync(Guid id)
+    {
+        try
+        {
+            await Bookings.CancelAsync(BookingCatalog.DefaultFacilityId, id);
+            await ShowListAsync();
+            await RefreshAvailabilityAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = true;
+            _message = ex.Message;
+        }
+    }
+
+    private void DismissMessage()
+    {
+        _message = null;
+        _error = false;
+    }
+
+    private static string Digits(string? v) =>
+        new string((v ?? string.Empty).Where(char.IsDigit).Take(11).ToArray());
+
+    private static int? ParseAge(string? v) =>
+        int.TryParse(v, out var n) ? n : null;
+
+    private static string Initials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "؟";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1) return parts[0][..Math.Min(1, parts[0].Length)];
+        return $"{parts[0][0]}{parts[^1][0]}";
+    }
+
+    private sealed record PersonDraft(
+        string PatientName,
+        string NationalId,
+        int? Age,
+        string Governorate,
+        string? Residence,
+        string Category,
+        string? SpecialType,
+        bool FromPrior = false)
+    {
+        public static PersonDraft Blank() => new("", "", null, "دمشق", null, "عامة", BookingCatalog.SpecialTypes[0]);
+    }
+}

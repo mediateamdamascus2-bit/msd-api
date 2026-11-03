@@ -1,0 +1,41 @@
+@using MedicalServices.Web.Services.Harasta
+
+<section class="harasta-stack">
+    <div class="harasta-panel">
+        <p class="eyebrow">STAFF</p>
+        <h1>الكوادر</h1>
+        <p class="lead">توزيع الكادر المذكور في هيكلية المشفى.</p>
+    </div>
+
+    <div class="staff-total harasta-panel">
+        <span>إجمالي مذكور</span>
+        <strong>@_total</strong>
+    </div>
+
+    <div class="staff-grid">
+        @foreach (var row in HarastaData.Staff)
+        {
+            <article class="staff-card">
+                <span>@row.Label</span>
+                <strong>@row.Value</strong>
+                <div class="staff-bar" aria-hidden="true">
+                    <span style="width:@BarWidth(row.Value)%"></span>
+                </div>
+            </article>
+        }
+    </div>
+</section>
+
+@code {
+    private int _total;
+    private int _max;
+
+    protected override void OnInitialized()
+    {
+        _total = HarastaData.Staff.Sum(s => s.Value);
+        _max = HarastaData.Staff.Max(s => s.Value);
+    }
+
+    private double BarWidth(int value) =>
+        _max <= 0 ? 0 : Math.Round(100.0 * value / _max, 1);
+}

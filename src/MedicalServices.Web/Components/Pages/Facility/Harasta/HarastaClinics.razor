@@ -1,0 +1,285 @@
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IClinicService Clinics
+@inject IHarastaHomeStatsService HomeStats
+@implements IDisposable
+
+<section class="harasta-stack sv-clinics">
+    @{
+        var waiting = _rows.Sum(r => r.Waiting);
+        var hot = _rows.Count(r => r.Waiting >= 3);
+        var clear = _rows.Count(r => r.Waiting == 0);
+        var busy = _rows.Count(r => r.Waiting > 0);
+        var finding = waiting == 0
+            ? "لا طابور ظاهر حالياً — الشبكة هادئة."
+            : hot > 0
+                ? $"{waiting} بالانتظار · {hot} عيادات بضغط مرتفع تحتاج متابعة."
+                : $"{waiting} بالانتظار موزّعون على {busy} عيادة.";
+    }
+
+    <header class="sv-hero">
+        <div class="sv-hero-copy">
+            <p class="sv-role">متابعة المسؤول · بدون إدخال</p>
+            <h1>لوحة متابعة العيادات</h1>
+            <p class="sv-lead">@finding</p>
+            <p class="sv-note">الإدخال والاستدعاء يتمّان من محطة كل عيادة. هذه الشاشة للرؤية والتقييم فقط.</p>
+        </div>
+        <div class="sv-hero-actions">
+            <button type="button" class="sv-btn ghost" disabled="@_busy" @onclick="RefreshAllAsync">تحديث الآن</button>
+            <a class="sv-btn soft" href="/stations/harasta/clinic-live" data-enhance-nav="false">إحصائيات اليوم</a>
+            <a class="sv-btn soft" href="/stations/harasta/display" data-enhance-nav="false">شاشة الاستدعاء</a>
+        </div>
+    </header>
+
+    <div class="sv-kpis" aria-label="مؤشرات المتابعة">
+        <article class="sv-kpi">
+            <span>عيادات عليها انتظار</span>
+            <strong>@busy</strong>
+            <small>من @_rows.Count</small>
+        </article>
+        <article class="sv-kpi accent">
+            <span>إجمالي الانتظار</span>
+            <strong>@waiting</strong>
+            <small>مرضى في الطوابير الآن</small>
+        </article>
+        <article class="sv-kpi @(hot > 0 ? "alert" : null)">
+            <span>ضغط مرتفع</span>
+            <strong>@hot</strong>
+            <small>3 فأكثر بالانتظار</small>
+        </article>
+        <article class="sv-kpi calm">
+            <span>بلا انتظار</span>
+            <strong>@clear</strong>
+            <small>عيادات هادئة</small>
+        </article>
+    </div>
+
+    <div class="sv-filters">
+        <button type="button" class="sv-chip @(_view == "all" ? "on" : null)" @onclick='() => _view = "all"'>الكل</button>
+        <button type="button" class="sv-chip @(_view == "hot" ? "on" : null)" @onclick='() => _view = "hot"'>ضغط مرتفع</button>
+        <button type="button" class="sv-chip @(_view == "busy" ? "on" : null)" @onclick='() => _view = "busy"'>فيها انتظار</button>
+        <button type="button" class="sv-chip @(_view == "clear" ? "on" : null)" @onclick='() => _view = "clear"'>هادئة</button>
+    </div>
+
+    <div class="sv-layout">
+        <section class="sv-board harasta-panel">
+            <div class="sv-section-head">
+                <div>
+                    <p class="sv-label">خريطة العيادات</p>
+                    <h2>تقييم الحمل الحالي</h2>
+                </div>
+                <span class="sv-refresh">يتحدّث كل 30 ثانية</span>
+            </div>
+
+            <div class="sv-grid">
+                @foreach (var r in VisibleRows)
+                {
+                    var level = Pressure(r.Waiting);
+                    var title = r.Clinic == "الإسعاف" ? r.Clinic : $"عيادة {r.Clinic}";
+                    <button type="button"
+                            class="sv-card level-@level @(_clinic == r.Clinic ? "on" : null)"
+                            @onclick="() => SelectClinicAsync(r.Clinic)">
+                        <div class="sv-card-top">
+                            <strong>@title</strong>
+                            <em class="sv-badge @level">@PressureLabel(level)</em>
+                        </div>
+                        <div class="sv-card-metrics">
+                            <div>
+                                <b class="@(r.Waiting > 0 ? "hot" : null)">@r.Waiting</b>
+                                <span>بالانتظار</span>
+                            </div>
+                            <div>
+                                <b>@r.TodayReferrals</b>
+                                <span>توجيهات اليوم</span>
+                            </div>
+                            <div>
+                                <b>@r.AvgWaitLabel</b>
+                                <span>متوسط الانتظار</span>
+                            </div>
+                            <div>
+                                <b>@r.MaxWaitLabel</b>
+                                <span>أطول انتظار</span>
+                            </div>
+                        </div>
+                        <div class="sv-bar" aria-hidden="true">
+                            <span style="width:@BarWidth(r.Waiting)%"></span>
+                        </div>
+                    </button>
+                }
+            </div>
+        </section>
+
+        <aside class="sv-detail harasta-panel">
+            @if (string.IsNullOrWhiteSpace(_clinic))
+            {
+                <div class="sv-empty">
+                    <strong>اختر عيادة للمتابعة</strong>
+                    <p>ستظهر هنا قائمة المرضى الحاليين للتقييم — دون أي إدخال أو استدعاء.</p>
+                </div>
+            }
+            else
+            {
+                var live = _rows.FirstOrDefault(x => x.Clinic == _clinic);
+                <div class="sv-detail-head">
+                    <div>
+                        <p class="sv-label">متابعة طابور</p>
+                        <h2>@(_clinic == "الإسعاف" ? "الإسعاف" : $"عيادة {_clinic}")</h2>
+                    </div>
+                    <strong class="sv-queue-n">@_queue.Count</strong>
+                </div>
+
+                @if (live is not null)
+                {
+                    <div class="sv-eval">
+                        <article><span>تقييم الحمل</span><strong>@PressureLabel(Pressure(live.Waiting))</strong></article>
+                        <article><span>متوسط الانتظار</span><strong>@live.AvgWaitLabel</strong></article>
+                        <article><span>أطول انتظار</span><strong>@live.MaxWaitLabel</strong></article>
+                        <article><span>توجيهات اليوم</span><strong>@live.TodayReferrals</strong></article>
+                    </div>
+                }
+
+                @if (_loading)
+                {
+                    <p class="sv-muted">جاري تحميل الطابور...</p>
+                }
+                else if (_queue.Count == 0)
+                {
+                    <div class="sv-empty compact">
+                        <strong>لا مرضى في الطابور</strong>
+                        <p>العيادة هادئة حالياً.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="sv-queue">
+                        @foreach (var (item, i) in _queue.Select((x, i) => (x, i)))
+                        {
+                            var waitMin = (int)Math.Max(0, (DateTimeOffset.UtcNow - item.OpenedAt).TotalMinutes);
+                            <article class="sv-patient">
+                                <div class="sv-patient-rank">@(i + 1)</div>
+                                <div class="sv-patient-main">
+                                    <strong>@item.PatientName</strong>
+                                    <span>@item.CaseNumber · @(item.Age?.ToString() ?? "—") سنة · @item.EntryType</span>
+                                </div>
+                                <div class="sv-patient-meta">
+                                    <em class="sv-status">@PatientCaseStatusLabels.ToArabic(item.Status)</em>
+                                    <span>@(waitMin < 60 ? $"{waitMin} د" : $"{waitMin / 60} س") منذ الفتح</span>
+                                    @if (item.CallCount > 0)
+                                    {
+                                        <span>استدعاء × @item.CallCount</span>
+                                    }
+                                </div>
+                            </article>
+                        }
+                    </div>
+                }
+
+                <div class="sv-station-hint">
+                    <span>للموظفين الذين يُدخلون البيانات:</span>
+                    <a href="@($"/stations/harasta/clinic/{Uri.EscapeDataString(_clinic)}")" data-enhance-nav="false">
+                        فتح محطة العيادة
+                    </a>
+                </div>
+            }
+        </aside>
+    </div>
+</section>
+
+@code {
+    private IReadOnlyList<ClinicLiveRow> _rows = [];
+    private string _clinic = string.Empty;
+    private string _view = "all";
+    private List<PatientCase> _queue = [];
+    private bool _loading;
+    private bool _busy;
+    private System.Threading.Timer? _timer;
+
+    private IEnumerable<ClinicLiveRow> VisibleRows =>
+        (_view switch
+        {
+            "hot" => _rows.Where(r => r.Waiting >= 3),
+            "busy" => _rows.Where(r => r.Waiting > 0),
+            "clear" => _rows.Where(r => r.Waiting == 0),
+            _ => _rows
+        }).OrderByDescending(r => r.Waiting).ThenBy(r => r.Clinic);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAllAsync();
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await RefreshAllAsync();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private async Task RefreshAllAsync()
+    {
+        _busy = true;
+        try
+        {
+            try
+            {
+                _rows = await HomeStats.GetClinicLiveAsync(HarastaData.FacilityId);
+            }
+            catch
+            {
+                var counts = await Clinics.GetQueueCountsAsync(HarastaData.FacilityId);
+                _rows = HarastaData.Clinics
+                    .Select(c => new ClinicLiveRow(c, counts.GetValueOrDefault(c), 0, "—", "—"))
+                    .ToList();
+            }
+
+            if (!string.IsNullOrWhiteSpace(_clinic))
+                await ReloadQueueAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SelectClinicAsync(string clinic)
+    {
+        _clinic = clinic;
+        await ReloadQueueAsync();
+    }
+
+    private async Task ReloadQueueAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_clinic)) return;
+        _loading = true;
+        try
+        {
+            _queue = (await Clinics.GetQueueAsync(HarastaData.FacilityId, _clinic)).ToList();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string Pressure(int waiting) =>
+        waiting >= 5 ? "critical" : waiting >= 3 ? "high" : waiting > 0 ? "mid" : "ok";
+
+    private static string PressureLabel(string level) => level switch
+    {
+        "critical" => "حرج",
+        "high" => "مرتفع",
+        "mid" => "متوسط",
+        _ => "مستقر"
+    };
+
+    private static double BarWidth(int waiting)
+    {
+        var max = 8.0;
+        return Math.Min(100, waiting / max * 100);
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

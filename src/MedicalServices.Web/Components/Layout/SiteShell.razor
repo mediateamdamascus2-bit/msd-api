@@ -1,0 +1,150 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Domain.Enums
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Facilities
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthState
+@inject IFacilityCatalog Facilities
+
+<div class="facility-shell">
+    <header class="facility-top">
+        <div class="facility-top-main">
+            @if (_isAdmin)
+            {
+                <a class="icon-btn" href="/admin/facilities" data-enhance-nav="false" title="عودة للإدارة">←</a>
+            }
+            <button type="button" class="icon-btn mobile-only" @onclick="ToggleMenu" aria-label="القائمة">☰</button>
+            <img src="images/logo.png" alt="" width="36" height="36" />
+            <div class="min-w-0">
+                <div class="eyebrow light">@(_profile?.Eyebrow ?? "FACILITY")</div>
+                <h1 class="facility-title">@(_facility?.NameAr ?? "واجهة الموقع")</h1>
+            </div>
+        </div>
+        <div class="facility-top-actions">
+            <AuthorizeView>
+                <Authorized>
+                    <span class="shell-user hide-sm">@context.User.FindFirst(System.Security.Claims.ClaimTypes.GivenName)?.Value</span>
+                    @if (_isAdmin)
+                    {
+                        <span class="role-pill">ADMIN</span>
+                    }
+                    <a class="btn-outline" href="/auth/logout" data-enhance-nav="false">خروج</a>
+                </Authorized>
+            </AuthorizeView>
+        </div>
+    </header>
+
+    @if (_menuOpen && _profile is not null)
+    {
+        <div class="facility-drawer-backdrop mobile-only" @onclick="CloseMenu"></div>
+        <nav class="facility-drawer mobile-only" aria-label="أقسام الموقع">
+            @foreach (var item in _profile.Nav)
+            {
+                <a class="facility-drawer-item @(_view == item.Key ? "active" : null) @(item.Ready ? null : "soon")"
+                   href="@Href(item.Key)" @onclick="CloseMenu">
+                    <span>@item.LabelAr</span>
+                    @if (!item.Ready)
+                    {
+                        <em>قريباً</em>
+                    }
+                </a>
+            }
+        </nav>
+    }
+
+    @if (_profile is not null)
+    {
+        <div class="facility-tabs desktop-only" role="tablist">
+            @foreach (var item in _profile.Nav)
+            {
+                <a class="facility-tab @(_view == item.Key ? "active" : null) @(item.Ready ? null : "soon")"
+                   href="@Href(item.Key)">
+                    @item.LabelAr
+                    @if (!item.Ready)
+                    {
+                        <em>قريباً</em>
+                    }
+                </a>
+            }
+        </div>
+    }
+
+    <main class="facility-main">
+        @Body
+    </main>
+
+    @if (_profile is not null)
+    {
+        <nav class="facility-bottom mobile-only" aria-label="تنقل سريع">
+            @foreach (var item in _profile.Nav.Where(n => n.MobilePrimary).Take(4))
+            {
+                <a class="facility-bottom-item @(_view == item.Key ? "active" : null)" href="@Href(item.Key)">
+                    <span>@item.LabelAr</span>
+                </a>
+            }
+            <button type="button" class="facility-bottom-item" @onclick="ToggleMenu">المزيد</button>
+        </nav>
+    }
+</div>
+
+@code {
+    private Facility? _facility;
+    private FacilityTypeProfile? _profile;
+    private string _facilityId = string.Empty;
+    private string _view = "overview";
+    private bool _menuOpen;
+    private bool _isAdmin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        _isAdmin = state.User.IsInRole(AppRoles.Admin);
+        await RefreshFromUriAsync();
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshFromUriAsync();
+            _menuOpen = false;
+            StateHasChanged();
+        });
+    }
+
+    private async Task RefreshFromUriAsync()
+    {
+        var path = Navigation.ToBaseRelativePath(Navigation.Uri).Trim('/');
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        // f/{id} or f/{id}/{view}
+        _facilityId = parts.Length >= 2 ? parts[1] : string.Empty;
+        _view = parts.Length >= 3 ? parts[2] : "overview";
+
+        if (string.IsNullOrWhiteSpace(_facilityId))
+            return;
+
+        _facility = await Facilities.FindAsync(_facilityId);
+        if (_facility is null)
+        {
+            _profile = null;
+            return;
+        }
+
+        _profile = FacilityTypeProfiles.For(_facility.Type);
+        if (_profile.Nav.All(n => !n.Key.Equals(_view, StringComparison.OrdinalIgnoreCase)))
+            _view = "overview";
+    }
+
+    private string Href(string view) =>
+        view.Equals("overview", StringComparison.OrdinalIgnoreCase)
+            ? $"/f/{_facilityId}"
+            : $"/f/{_facilityId}/{view}";
+
+    private void ToggleMenu() => _menuOpen = !_menuOpen;
+    private void CloseMenu() => _menuOpen = false;
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}

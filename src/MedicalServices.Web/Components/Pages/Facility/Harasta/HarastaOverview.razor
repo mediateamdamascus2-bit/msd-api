@@ -1,0 +1,417 @@
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IDepartmentService Departments
+@inject IHarastaHomeStatsService HomeStats
+@implements IDisposable
+
+<section class="harasta-stack harasta-home hx-home">
+    @{
+        var waitingNow = _board.Sum(d => d.Queued + (d.Capacity is null ? d.Present : 0));
+        var pressure = _board
+            .Select(d =>
+            {
+                var load = d.Capacity is int cap and > 0 ? d.Occupied * 100.0 / cap : (d.Present > 0 ? 100 : 0);
+                return (Dept: d, Load: load, Need: d.Queued + (d.Capacity is null ? d.Present : 0));
+            })
+            .Where(x => x.Need > 0 || x.Load >= 75)
+            .OrderByDescending(x => x.Need)
+            .ThenByDescending(x => x.Load)
+            .Take(4)
+            .ToList();
+        var finding = waitingNow > 0
+            ? $"{waitingNow} بانتظار الدور الآن — راقب الاستقبال قبل أن يطول الانتظار."
+            : pressure.Count > 0
+                ? $"ضغط على {pressure[0].Dept.Name} — تابع الأقسام قبل امتلاء السعة."
+                : "التشغيل مستقر حالياً — راقب العيادات والأقسام عند الحاجة.";
+    }
+
+    <header class="hx-hero">
+        <div class="hx-hero-glow" aria-hidden="true"></div>
+        <div class="hx-hero-copy">
+            <div class="hx-brand">
+                <img src="images/logo.png" alt="" width="48" height="48" />
+                <div>
+                    <p class="hx-kicker">مشفى الشرطة في حرستا</p>
+                    <p class="hx-kicker-en" dir="ltr">Police Hospital · Harasta</p>
+                </div>
+            </div>
+            <h1>غرفة عمليات المشفى</h1>
+            <p class="hx-lead">@finding</p>
+            <div class="hx-actions">
+                <a class="hx-btn solid" href="/f/harasta/reception">متابعة الاستقبال</a>
+                <a class="hx-btn soft" href="/f/harasta/clinics">متابعة العيادات</a>
+                <a class="hx-btn soft" href="/f/harasta/depts">أقسام التحويل</a>
+                <a class="hx-btn ghost" href="/stations/harasta/booking" data-enhance-nav="false">الحجز</a>
+            </div>
+        </div>
+    </header>
+
+    <div class="hx-attention" aria-label="يحتاج انتباهاً">
+        <div class="hx-attention-head">
+            <div>
+                <p class="hx-label">متابعة فورية</p>
+                <h2>شريط الانتظار</h2>
+            </div>
+            <span>@(pressure.Count == 0 ? "لا ضغط ظاهر" : $"{pressure.Count} يحتاج مراجعة")</span>
+        </div>
+        @if (pressure.Count == 0)
+        {
+            <p class="hx-attention-empty">كل الأقسام ضمن الحمل الطبيعي حالياً.</p>
+        }
+        else
+        {
+            <div class="hx-attention-strip">
+                @foreach (var item in pressure)
+                {
+                    <a class="hx-attention-item" href="/f/harasta/depts">
+                        <strong>@item.Dept.Name</strong>
+                        <em>
+                            @(item.Need > 0 ? $"{item.Need} بانتظار" : $"{item.Load:0}% مشغول")
+                        </em>
+                    </a>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="hx-kpis" aria-label="مؤشرات المشفى">
+        @foreach (var kpi in HarastaData.Kpis)
+        {
+            <article class="hx-kpi">
+                <span>@kpi.Label</span>
+                <strong>@kpi.Value</strong>
+            </article>
+        }
+    </div>
+
+    <div class="harasta-panel live-depts">
+        <div class="live-depts-head">
+            <div>
+                <p class="hx-label">الأقسام الآن</p>
+                <h2>الحمل ووجهات التحويل</h2>
+            </div>
+            <a class="hx-link" href="/f/harasta/depts">لوحة المتابعة</a>
+        </div>
+        <div class="live-depts-grid">
+            @foreach (var d in _board)
+            {
+                var pct = d.Capacity is int cap and > 0 ? (d.Occupied * 100.0 / cap) : 0;
+                var barTone = pct >= 90 ? "hot" : pct >= 75 ? "warm" : "ok";
+                <article class="live-dept-card tone-@d.Tone">
+                    <div class="live-dept-top">
+                        <span class="live-dept-glyph" aria-hidden="true">@GlyphMarkup(d.Name)</span>
+                        <strong>@d.Name</strong>
+                        @if (d.Queued > 0)
+                        {
+                            <em class="live-dept-queue">بالدور @d.Queued</em>
+                        }
+                    </div>
+                    @if (d.Capacity is int capacity)
+                    {
+                        <div class="live-dept-metrics">
+                            <div><strong>@capacity</strong><span>العدد</span></div>
+                            <div><strong class="warn">@d.Occupied</strong><span>مشغول</span></div>
+                            <div><strong class="@(d.Free > 0 ? "ok" : "bad")">@d.Free</strong><span>فارغ</span></div>
+                        </div>
+                        <div class="live-dept-bar">
+                            <span class="@barTone" style="width:@pct.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)%"></span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="live-dept-wait-now">
+                            <strong class="@(d.Present > 0 ? "warn" : "ok")">@d.Present</strong>
+                            <span>بانتظار الدور الآن</span>
+                        </div>
+                    }
+                    <div class="live-dept-foot">
+                        <div><strong>@d.TodayReferrals</strong><span>توجيهات اليوم</span></div>
+                        <div><strong class="avg">@d.AvgWaitLabel</strong><span>متوسط الانتظار</span></div>
+                        <div><strong>@d.MaxWaitLabel</strong><span>أطول انتظار حالي</span></div>
+                    </div>
+                </article>
+            }
+        </div>
+    </div>
+
+    <div class="harasta-panel events-panel">
+        <div class="events-head">
+            <div class="events-title">
+                <div>
+                    <p class="hx-label">الأحداث</p>
+                    <h2>إحصائية الأحداث</h2>
+                </div>
+            </div>
+            <div class="events-filters">
+                @foreach (var (label, key) in _rangeButtons)
+                {
+                    <button type="button" class="events-chip @(_rangeKey == key && string.IsNullOrEmpty(_dayPick) ? "on" : null)"
+                            @onclick="() => SetRange(key)">@label</button>
+                }
+                <label class="events-date">
+                    <NiceDatePicker Value="_dayPick" ValueChanged="OnDayPickChanged" Placeholder="يوم محدد" CssClass="hasia-date-input" />
+                    <span>سنة / شهر / يوم</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="events-kinds">
+            @foreach (var k in _events.Kinds)
+            {
+                <button type="button" class="events-kind tone-@k.Tone @(_selKind == k.Key ? "on" : null)"
+                        @onclick="() => ToggleKind(k.Key)">
+                    <strong class="@(k.Count > 0 ? null : "zero")">@k.Count</strong>
+                    <span>@k.Key</span>
+                </button>
+            }
+        </div>
+
+        <div class="events-body">
+            <div class="events-chart">
+                <div class="events-chart-head">
+                    <span>عدد الأحداث يوميًا</span>
+                    <span>الإجمالي <b>@_events.Total</b></span>
+                </div>
+                @{
+                    var maxBar = Math.Max(1, _events.Daily.Count == 0 ? 1 : _events.Daily.Max(b => b.Count));
+                }
+                <div class="events-bars">
+                    @foreach (var b in _events.Daily)
+                    {
+                        var h = (b.Count * 100.0 / maxBar);
+                        <div class="events-bar">
+                            <em>@(b.Count > 0 ? b.Count.ToString() : "")</em>
+                            <span style="height:@h.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)%"></span>
+                            <small>@b.Day.Day/@b.Day.Month</small>
+                        </div>
+                    }
+                </div>
+            </div>
+            <div class="events-list">
+                @if (FilteredEvents.Count == 0)
+                {
+                    <p class="events-empty">لا توجد أحداث في هذه الفترة</p>
+                }
+                else
+                {
+                    @foreach (var e in FilteredEvents)
+                    {
+                        <div class="events-row">
+                            <i class="tone-@e.Tone"></i>
+                            <strong>@e.PatientName</strong>
+                            <span>@e.Label</span>
+                            <time>@e.At.ToLocalTime().ToString("HH:mm")</time>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="harasta-panel clinic-live-teaser">
+        <div class="clinic-live-teaser-main">
+            <div>
+                <p class="hx-label">العيادات</p>
+                <h2>إحصائيات العيادات — اليوم</h2>
+                <p class="lead" style="margin:0.25rem 0 0">الانتظار، التوجيهات، ومتوسط الانتظار لكل عيادة.</p>
+            </div>
+        </div>
+        <div class="hx-teaser-actions">
+            <a class="hx-btn soft dark" href="/stations/harasta/clinic-live" data-enhance-nav="false">عرض كاملة</a>
+            <a class="hx-link" href="/f/harasta/clinics">متابعة المسؤول</a>
+        </div>
+    </div>
+
+    <div class="harasta-panel capacity-panel">
+        <div class="section-head">
+            <p class="hx-label">السعة</p>
+            <h2>توزيع الأسرّة</h2>
+        </div>
+        @{
+            var bedMax = Math.Max(1, HarastaData.BedCapacity.Max(x => x.Beds));
+        }
+        <div class="capacity-list">
+            @foreach (var row in HarastaData.BedCapacity)
+            {
+                var w = row.Beds * 100.0 / bedMax;
+                <div class="capacity-row">
+                    <span class="capacity-label">@row.Label</span>
+                    <div class="capacity-track">
+                        <span class="tone-@row.Tone" style="width:@w.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)%"></span>
+                    </div>
+                    <strong class="capacity-val">@row.Beds</strong>
+                </div>
+            }
+        </div>
+        <p class="capacity-note">@HarastaData.BedCapacityNote</p>
+    </div>
+
+    <div class="harasta-panel ops-live-panel">
+        <div class="ops-live-head">
+            <div>
+                <p class="hx-label">من نشاط النظام</p>
+                <h2>مؤشرات التشغيل والإنجاز</h2>
+            </div>
+            <div class="events-filters compact">
+                <button type="button" class="events-chip @(_opsToday ? "on" : null)" @onclick="() => SetOpsRange(true)">اليوم</button>
+                <button type="button" class="events-chip @(!_opsToday ? "on" : null)" @onclick="() => SetOpsRange(false)">الإجمالي</button>
+            </div>
+        </div>
+        <div class="ops-live-grid">
+            @foreach (var m in _ops.Items)
+            {
+                <article class="ops-live-card">
+                    <div class="ops-live-k tone-@m.Tone">@m.Key</div>
+                    <strong class="@(m.Value > 0 ? null : "zero")">@m.Value</strong>
+                    <span>@m.Detail</span>
+                </article>
+            }
+        </div>
+    </div>
+
+    <div class="harasta-panel harasta-ops-panel">
+        <div class="section-head">
+            <h2>نبض التشغيل</h2>
+            <p>أرقام تقريبية من هيكلية المشفى</p>
+        </div>
+        <div class="ops-grid">
+            @foreach (var item in HarastaData.OpsStats)
+            {
+                <article class="ops-card">
+                    <span>@item.Label</span>
+                    <strong>@item.Value</strong>
+                    <em>@item.Unit</em>
+                </article>
+            }
+        </div>
+    </div>
+
+</section>
+
+@code {
+    private static readonly (string Label, int Key)[] _rangeButtons =
+    [
+        ("اليوم", 0), ("أمس", -1), ("آخر 7 أيام", 7), ("آخر 30 يومًا", 30), ("الكل", 9999)
+    ];
+
+    private IReadOnlyList<DeptLiveCard> _board = [];
+    private HarastaEventsSnapshot _events = new([], [], [], 0);
+    private HarastaOpsSnapshot _ops = new([]);
+    private int _rangeKey;
+    private string _dayPick = "";
+    private string? _selKind;
+    private bool _opsToday = true;
+    private System.Threading.Timer? _timer;
+
+    private IReadOnlyList<HarastaEventRow> FilteredEvents =>
+        string.IsNullOrEmpty(_selKind)
+            ? _events.Rows
+            : _events.Rows.Where(r => r.Kind == _selKind).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await RefreshAsync();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private async Task SetRange(int key)
+    {
+        _rangeKey = key;
+        _dayPick = "";
+        await LoadEventsAsync();
+    }
+
+    private async Task OnDayPickChanged(string v)
+    {
+        _dayPick = v ?? "";
+        await LoadEventsAsync();
+    }
+
+    private void ToggleKind(string key) =>
+        _selKind = _selKind == key ? null : key;
+
+    private async Task SetOpsRange(bool today)
+    {
+        _opsToday = today;
+        _ops = await HomeStats.GetOpsAsync(HarastaData.FacilityId, _opsToday);
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            _board = await Departments.GetLiveBoardAsync(HarastaData.FacilityId);
+            _ops = await HomeStats.GetOpsAsync(HarastaData.FacilityId, _opsToday);
+            await LoadEventsAsync();
+        }
+        catch
+        {
+            _board = HarastaData.Departments.Select(n => new DeptLiveCard(
+                n, HarastaData.DepartmentTone.GetValueOrDefault(n, "cyan"),
+                HarastaData.DepartmentCapacity.GetValueOrDefault(n),
+                0, 0, HarastaData.DepartmentCapacity.GetValueOrDefault(n) ?? 0,
+                0, 0, "—", "—")).ToList();
+        }
+    }
+
+    private async Task LoadEventsAsync()
+    {
+        var (from, to) = ResolveRange();
+        _events = await HomeStats.GetEventsAsync(HarastaData.FacilityId, from, to);
+    }
+
+    private (DateTimeOffset From, DateTimeOffset To) ResolveRange()
+    {
+        if (!string.IsNullOrEmpty(_dayPick) && DateOnly.TryParse(_dayPick, out var day))
+        {
+            var local = day.ToDateTime(TimeOnly.MinValue);
+            var start = new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local)).ToUniversalTime();
+            return (start, start.AddDays(1));
+        }
+
+        var todayLocal = DateTime.Today;
+        var todayStart = new DateTimeOffset(todayLocal, TimeZoneInfo.Local.GetUtcOffset(todayLocal)).ToUniversalTime();
+        return _rangeKey switch
+        {
+            0 => (todayStart, todayStart.AddDays(1)),
+            -1 => (todayStart.AddDays(-1), todayStart),
+            7 => (todayStart.AddDays(-6), todayStart.AddDays(1)),
+            30 => (todayStart.AddDays(-29), todayStart.AddDays(1)),
+            _ => (todayStart.AddYears(-10), todayStart.AddDays(1))
+        };
+    }
+
+    private static readonly HashSet<string> GlyphNames =
+    [
+        "أسرّة الاستشفاء", "العناية", "العمليات", "المخبر", "الصيدلية", "الأشعة"
+    ];
+
+    private static MarkupString GlyphMarkup(string name)
+    {
+        // Only fixed whitelist names become MarkupString — never raw/user/DB text.
+        if (!GlyphNames.Contains(name))
+            return new MarkupString("<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"4\"/></svg>");
+
+        const string attrs = "width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"";
+        var svg = name switch
+        {
+            "أسرّة الاستشفاء" => $"<svg {attrs}><path d=\"M3 7v11\"/><path d=\"M21 14V7\"/><path d=\"M3 14h18\"/><path d=\"M5 14V9h6v5\"/></svg>",
+            "العناية" => $"<svg {attrs}><path d=\"M22 12h-4l-3 9L9 3l-3 9H2\"/></svg>",
+            "العمليات" => $"<svg {attrs}><path d=\"M20 7H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1z\"/><path d=\"M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2\"/><path d=\"M12 11v6\"/><path d=\"M9 14h6\"/></svg>",
+            "المخبر" => $"<svg {attrs}><path d=\"M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2\"/><rect x=\"9\" y=\"3\" width=\"6\" height=\"4\" rx=\"1\"/><path d=\"M9 12h6\"/><path d=\"M9 16h4\"/></svg>",
+            "الصيدلية" => $"<svg {attrs}><path d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"/><path d=\"M3.3 7L12 12l8.7-5\"/><path d=\"M12 22V12\"/></svg>",
+            "الأشعة" => $"<svg {attrs}><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M2 12h3\"/><path d=\"M19 12h3\"/><path d=\"M12 2v3\"/><path d=\"M12 19v3\"/><path d=\"M5 5l2 2\"/><path d=\"M17 17l2 2\"/><path d=\"M5 19l2-2\"/><path d=\"M17 7l2-2\"/></svg>",
+            _ => $"<svg {attrs}><circle cx=\"12\" cy=\"12\" r=\"4\"/></svg>"
+        };
+        return new MarkupString(svg);
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

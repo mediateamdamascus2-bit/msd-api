@@ -1,0 +1,56 @@
+@using MedicalServices.Web.Services.Harasta
+
+<section class="harasta-stack">
+    <div class="harasta-panel">
+        <p class="eyebrow">STRUCTURE</p>
+        <h1>الهيكلية والأقسام</h1>
+        <p class="lead">مجالات الخدمة ووحداتها مع حالة التوافر.</p>
+    </div>
+
+    <div class="type-filters">
+        <button type="button" class="chip @(_filter is null ? "active" : null)" @onclick="() => _filter = null">الكل</button>
+        @foreach (var domain in HarastaData.Domains)
+        {
+            <button type="button" class="chip @(_filter == domain.Key ? "active" : null)" @onclick="() => _filter = domain.Key">
+                @domain.Title
+            </button>
+        }
+    </div>
+
+    @foreach (var domain in Shown)
+    {
+        <section class="harasta-panel">
+            <div class="section-head">
+                <h2>@domain.Title</h2>
+                <p>@domain.Units.Count وحدة</p>
+            </div>
+            <div class="unit-list">
+                @foreach (var unit in domain.Units)
+                {
+                    <article class="unit-row">
+                        <div>
+                            <strong>@unit.Name</strong>
+                            <p>@unit.Capacity</p>
+                        </div>
+                        <span class="status-badge @StatusClass(unit.Status)">@unit.Status</span>
+                    </article>
+                }
+            </div>
+        </section>
+    }
+</section>
+
+@code {
+    private string? _filter;
+
+    private IEnumerable<DomainGroup> Shown =>
+        HarastaData.Domains.Where(d => _filter is null || d.Key == _filter);
+
+    private static string StatusClass(string status) => status switch
+    {
+        "متوافر" => "ok",
+        "قيد التجهيز" => "mid",
+        "يحتاج تثبيت" => "bad",
+        _ => ""
+    };
+}

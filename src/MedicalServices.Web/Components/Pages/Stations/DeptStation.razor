@@ -1,0 +1,160 @@
+@page "/stations/harasta/dept/{DeptName}"
+@layout EmptyLayout
+@attribute [Authorize(Roles = "Admin,StationUser")]
+@using MedicalServices.Domain.Entities
+@using MedicalServices.Infrastructure.Identity
+@using MedicalServices.Web.Services
+@using MedicalServices.Web.Services.Harasta
+@inject IDepartmentService Departments
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>@_dept — حرستا</PageTitle>
+
+<div class="station-shell harasta-skin">
+    <header class="station-top">
+        <div>
+            <p class="eyebrow light">محطة · قسم</p>
+            <h1>@_dept</h1>
+            <p class="station-sub">محطة قسم تحويل · مشفى حرستا</p>
+        </div>
+        <div class="station-top-meta">
+            <a class="btn-outline" href="/auth/logout" data-enhance-nav="false">خروج</a>
+        </div>
+    </header>
+
+    @if (_denied || _invalid)
+    {
+        <section class="harasta-panel station-body">
+            <h2>@( _denied ? "غير مصرح" : "قسم غير معروف")</h2>
+        </section>
+    }
+    else
+    {
+        <section class="reception-layout station-body">
+            <div class="harasta-panel">
+                <div class="queue-head">
+                    <div><p class="eyebrow">QUEUE</p><h2>الحالات</h2></div>
+                    <strong class="queue-count">@_queue.Count</strong>
+                </div>
+                @if (_queue.Count == 0)
+                {
+                    <p class="muted" style="text-align:center;padding:2rem 0">لا توجد حالات</p>
+                }
+                else
+                {
+                    <div class="queue-list">
+                        @foreach (var item in _queue)
+                        {
+                            <button type="button" class="queue-card text-right @(_selected?.Id == item.Id ? "selected" : null)" @onclick="() => _selected = item">
+                                <div class="queue-card-main">
+                                    <strong>@item.PatientName</strong>
+                                    <span class="muted mono">@item.CaseNumber</span>
+                                </div>
+                            </button>
+                        }
+                    </div>
+                }
+                <button type="button" class="chip" style="margin-top:0.75rem" @onclick="ReloadAsync">تحديث</button>
+            </div>
+            <div class="harasta-panel">
+                @if (_selected is null)
+                {
+                    <p class="muted" style="text-align:center;padding:2rem 0">اختر حالة</p>
+                }
+                else
+                {
+                    <h2>@_selected.PatientName</h2>
+                    <input class="input" style="margin-top:1rem" @bind="_result" placeholder="نتيجة القسم" />
+                    @if (!string.IsNullOrWhiteSpace(_message))
+                    {
+                        <div class="@(_error ? "login-error" : "save-ok")" style="margin-top:0.85rem">@_message</div>
+                    }
+                    <div class="booking-arrive-actions" style="margin-top:1rem">
+                        <button type="button" class="btn-enter compact" disabled="@_busy" @onclick="CompleteAsync">إنهاء</button>
+                        <button type="button" class="chip" disabled="@_busy" @onclick="ReturnAsync">إعادة للعيادة</button>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+</div>
+
+@code {
+    [Parameter] public string DeptName { get; set; } = string.Empty;
+
+    private string _dept = string.Empty;
+    private bool _denied;
+    private bool _invalid;
+    private List<PatientCase> _queue = [];
+    private PatientCase? _selected;
+    private string _result = string.Empty;
+    private bool _busy;
+    private bool _error;
+    private string? _message;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+        var isAdmin = user.IsInRole(AppRoles.Admin);
+        var linked = user.FindFirst(AppClaimTypes.FacilityId)?.Value;
+        var home = user.FindFirst(AppClaimTypes.HomePath)?.Value;
+
+        _dept = Uri.UnescapeDataString(DeptName ?? string.Empty).Trim();
+        _invalid = !HarastaData.Departments.Contains(_dept);
+
+        var stationOnly = user.IsInRole(AppRoles.StationUser) && !isAdmin;
+        if (stationOnly)
+        {
+            var assigned = StationAccess.DeptFromHomePath(home);
+            _denied = !string.Equals(assigned, _dept, StringComparison.Ordinal);
+        }
+        else
+        {
+            _denied = !(isAdmin || string.Equals(linked, HarastaData.FacilityId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!_denied && !_invalid) await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _queue = (await Departments.GetQueueAsync(HarastaData.FacilityId, _dept)).ToList();
+        if (_selected is not null)
+            _selected = _queue.FirstOrDefault(x => x.Id == _selected.Id);
+    }
+
+    private async Task<string> UserAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        return state.User.Identity?.Name ?? "unknown";
+    }
+
+    private async Task CompleteAsync()
+    {
+        if (_selected is null) return;
+        _busy = true;
+        try
+        {
+            await Departments.CompleteAsync(HarastaData.FacilityId, _selected.Id, _result, await UserAsync());
+            _error = false; _message = "تم الإنهاء."; _selected = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = true; _message = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task ReturnAsync()
+    {
+        if (_selected is null) return;
+        _busy = true;
+        try
+        {
+            await Departments.ReturnToClinicAsync(HarastaData.FacilityId, _selected.Id, _result, await UserAsync());
+            _error = false; _message = "أُعيد للعيادة."; _selected = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = true; _message = ex.Message; }
+        finally { _busy = false; }
+    }
+}

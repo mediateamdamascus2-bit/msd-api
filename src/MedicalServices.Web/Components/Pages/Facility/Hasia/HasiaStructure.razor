@@ -1,0 +1,80 @@
+@using MedicalServices.Web.Services.Hasia
+@inject IHasiaOpsService Ops
+
+<section class="harasta-stack hasia-page">
+    <header class="hasia-page-head harasta-panel">
+        <div class="hasia-page-head-icon" aria-hidden="true">▦</div>
+        <div class="hasia-page-head-text">
+            <p class="eyebrow">SITE LAYOUT · حرم السجن</p>
+            <h1>البنية الطبية</h1>
+            <p class="lead">توزّع الأقسام بين النقطة الطبية داخل الحرم الداخلي والمشفى ضمن حرم السجن.</p>
+        </div>
+    </header>
+
+    <div class="harasta-panel">
+        <div class="hasia-campus">
+            <div class="hasia-campus-label">حرم السجن</div>
+            <div class="hasia-zones">
+                <div class="hasia-zone point">
+                    <div class="hasia-zone-head">
+                        <div>
+                            <div class="hasia-zone-label point">الحرم الداخلي</div>
+                            <h2>النقطة الطبية</h2>
+                        </div>
+                        <span class="hasia-soft-tag cyan">مستوى أولي</span>
+                    </div>
+                    <div class="hasia-svc-grid">
+                        @foreach (var (s, i) in HasiaData.Services.Where(x => x.Zone == "point").Select((s, i) => (s, i)))
+                        {
+                            <div class="hasia-svc-card static">
+                                <span class="hasia-svc-idx">@i.ToString("00")</span>
+                                <div>
+                                    <strong>@s.Name</strong>
+                                    <em>@(s.Capacity is int cap ? $"{Load(s.Id)}/{cap} سرير" : $"{Load(s.Id)} حالة جارية")</em>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="hasia-zone hospital">
+                    <div class="hasia-zone-head">
+                        <div>
+                            <div class="hasia-zone-label hosp">خارج الحرم الداخلي · ضمن حرم السجن</div>
+                            <h2>المشفى</h2>
+                        </div>
+                        <span class="hasia-soft-tag blue">مستوى متقدم</span>
+                    </div>
+                    <div class="hasia-svc-grid">
+                        @foreach (var (s, i) in HasiaData.Services.Where(x => x.Zone == "hospital").Select((s, i) => (s, i)))
+                        {
+                            <div class="hasia-svc-card static">
+                                <span class="hasia-svc-idx hosp">@i.ToString("00")</span>
+                                <div>
+                                    <strong>@s.Name</strong>
+                                    <em>@(s.Capacity is int cap ? $"{Load(s.Id)}/{cap} سرير" : $"{Load(s.Id)} حالة جارية")</em>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <p class="eyebrow" style="margin-top:1.35rem">PATIENT PATHWAY · مسار المريض</p>
+        <div class="hasia-pathway">
+            @foreach (var step in new[] { "شكاية النزيل", "الفرز (ممرض يرافقه)", "إسعاف النقطة", "عيادة سنية / داخلية أولية", "عيادات المشفى" })
+            {
+                <span>@step</span>
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    private Dictionary<string, int> _load = new();
+
+    protected override async Task OnInitializedAsync() =>
+        _load = await Ops.LoadByServiceAsync();
+
+    private int Load(string id) => _load.GetValueOrDefault(id);
+}
